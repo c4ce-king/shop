@@ -1,0 +1,17 @@
+# frontend
+frontend/node_modules
+frontend/.next
+frontend/out
+frontend/.turbo
+
+# backend
+backend/vendor
+backend/storage
+backend/bootstrap/cache
+backend/.env
+
+# OS/IDE
+.DS_Store
+Thumbs.db
+.vscode
+.idea
