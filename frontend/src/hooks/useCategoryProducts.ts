@@ -14,11 +14,22 @@ export type Facet = {
   options: FacetOption[];
 };
 
-export type PriceMeta = { min_available: number | null; max_available: number | null };
+export type PriceMeta = { min_available: number | null; max_available: number | null; mode?: string };
+
+export type ProductListingItem = {
+  id: number;
+  name: string;
+  slug: string;
+  price_rsd: number;
+  image_grid_url?: string | null;
+
+  // future-proof (kad backend krene da šalje do 5 slika)
+  images?: string[]; // urls
+};
 
 export type CategoryListingResponse = {
   category: { id: number; name: string; slug_path: string };
-  products: { id: number; name: string; slug: string; price_rsd: number; image_grid_url?: string | null }[];
+  products: ProductListingItem[];
   facets: Facet[];
   meta?: { price?: PriceMeta };
   pagination: { page: number; per_page: number; total: number };
@@ -39,6 +50,8 @@ function toBackendParams(filters: ListingFilters): URLSearchParams {
   if (f.sort && f.sort !== "podrazumevano") sp.set("sort", f.sort);
   if (f.page && f.page > 1) sp.set("page", String(f.page));
 
+  if (f.perPage && f.perPage !== 24) sp.set("per_page", String(f.perPage));
+
   return sp;
 }
 
@@ -58,6 +71,41 @@ export function fetchCategoryProducts(slugPath: string, filters: ListingFilters,
   return apiGet<CategoryListingResponse>(url, undefined, signal);
 }
 
+function normalizeFacetCode(code: string): string {
+  const c = (code ?? "").toLowerCase();
+  if (c === "brend") return "brand";
+  if (c === "velicina") return "size";
+  if (c === "boja") return "color";
+  if (c === "materijal") return "material";
+  return code;
+}
+
+function normalizeResponseFacets(res: CategoryListingResponse): CategoryListingResponse {
+  const facets = Array.isArray(res.facets) ? res.facets : [];
+  const normalized = facets.map((f) => ({
+    ...f,
+    code: normalizeFacetCode(f.code),
+  }));
+
+  const by = new Map<string, Facet>();
+  for (const f of normalized) {
+    const key = f.code;
+    const prev = by.get(key);
+    if (!prev) {
+      by.set(key, f);
+      continue;
+    }
+
+    const optMap = new Map<string, FacetOption>();
+    for (const o of prev.options ?? []) optMap.set(String(o.value), o);
+    for (const o of f.options ?? []) optMap.set(String(o.value), o);
+
+    by.set(key, { ...prev, options: Array.from(optMap.values()) });
+  }
+
+  return { ...res, facets: Array.from(by.values()) };
+}
+
 export function useCategoryProducts(slugPath: string, filters: ListingFilters) {
   const f = normalizeFilters(filters);
 
@@ -65,8 +113,14 @@ export function useCategoryProducts(slugPath: string, filters: ListingFilters) {
     queryKey: categoryProductsQueryKey(slugPath, f),
     queryFn: ({ signal }) => fetchCategoryProducts(slugPath, f, signal),
     enabled: !!slugPath,
-    staleTime: 10_000,
-    placeholderData: (prev) => prev, // nema blink
+
+    select: normalizeResponseFacets,
+
+    staleTime: 60_000,
+    gcTime: 10 * 60_000,
+    placeholderData: (prev) => prev,
+    refetchOnWindowFocus: false,
+
     retry: 0,
   });
 }

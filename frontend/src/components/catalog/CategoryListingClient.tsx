@@ -1,11 +1,13 @@
 "use client";
 
 import * as React from "react";
-import { ChevronDown, X } from "lucide-react";
+import { ChevronDown, LayoutGrid, List, X } from "lucide-react";
 
 import { useCategoryProducts, type Facet, type FacetOption } from "@/hooks/useCategoryProducts";
-import { useUrlFilters, type SortKey } from "@/hooks/useUrlFilters";
+import { useUrlFilters, type SortKey, type ViewMode } from "@/hooks/useUrlFilters";
 import { RangeSlider } from "@/components/ui/RangeSlider";
+import { ProductCardGallery } from "@/components/catalog/ProductCardGallery";
+import { ProductRowList } from "@/components/catalog/ProductRowList";
 
 type Props = { slugPath: string };
 
@@ -19,6 +21,8 @@ const SORT_OPTIONS: Array<{ key: SortKey; label: string; disabled?: boolean }> =
   { key: "ocena", label: "Ocena", disabled: true },
 ];
 
+const PER_PAGE_OPTIONS = [12, 24, 36, 48, 60] as const;
+
 function formatRSD(n: number) {
   return new Intl.NumberFormat("sr-RS").format(Math.round(n)) + " RSD";
 }
@@ -26,7 +30,9 @@ function formatRSD(n: number) {
 type ChipItem =
   | { kind: "facet"; code: "brand" | "size" | "color" | "material"; value: string; label: string }
   | { kind: "price"; label: string }
-  | { kind: "sort"; label: string };
+  | { kind: "sort"; label: string }
+  | { kind: "view"; label: string }
+  | { kind: "perPage"; label: string };
 
 function Chip({ label, onRemove }: { label: string; onRemove: () => void }) {
   return (
@@ -66,8 +72,49 @@ function Collapsible({
   );
 }
 
+function ViewToggle({ value, onChange }: { value: ViewMode; onChange: (v: ViewMode) => void }) {
+  return (
+    <div className="inline-flex rounded-full border bg-white p-1">
+      <button
+        type="button"
+        onClick={() => onChange("galerija")}
+        className={`inline-flex items-center gap-2 rounded-full px-3 py-1.5 text-sm transition ${
+          value === "galerija" ? "bg-black text-white" : "hover:bg-black/5"
+        }`}
+        aria-pressed={value === "galerija"}
+      >
+        <LayoutGrid className="h-4 w-4" />
+        Galerija
+      </button>
+      <button
+        type="button"
+        onClick={() => onChange("lista")}
+        className={`inline-flex items-center gap-2 rounded-full px-3 py-1.5 text-sm transition ${
+          value === "lista" ? "bg-black text-white" : "hover:bg-black/5"
+        }`}
+        aria-pressed={value === "lista"}
+      >
+        <List className="h-4 w-4" />
+        Lista
+      </button>
+    </div>
+  );
+}
+
 export default function CategoryListingClient({ slugPath }: Props) {
-  const { filters, toggleMulti, removeMulti, setPriceDraft, setPrice, setSort, setPage, resetAll } = useUrlFilters();
+  const {
+    filters,
+    toggleMulti,
+    removeMulti,
+    setPriceDraft,
+    setPrice,
+    setSort,
+    setPage,
+    setPerPage,
+    setView,
+    resetAll,
+  } = useUrlFilters();
+
   const q = useCategoryProducts(slugPath, filters);
   const data = q.data;
 
@@ -76,9 +123,14 @@ export default function CategoryListingClient({ slugPath }: Props) {
   React.useEffect(() => {
     const minAvail = data?.meta?.price?.min_available ?? null;
     const maxAvail = data?.meta?.price?.max_available ?? null;
-    if (minAvail != null && maxAvail != null && maxAvail >= minAvail) {
-      setBounds({ min: minAvail, max: maxAvail });
-    }
+
+    if (minAvail == null || maxAvail == null || maxAvail < minAvail) return;
+
+    setBounds((prev) => {
+      if (!prev) return { min: minAvail, max: maxAvail };
+      if (prev.min === minAvail && prev.max === maxAvail) return prev;
+      return { min: minAvail, max: maxAvail };
+    });
   }, [data?.meta?.price?.min_available, data?.meta?.price?.max_available]);
 
   const facets = data?.facets ?? [];
@@ -104,6 +156,9 @@ export default function CategoryListingClient({ slugPath }: Props) {
   const uiMin = draftPrice?.[0] ?? committedMin;
   const uiMax = draftPrice?.[1] ?? committedMax;
 
+  const view: ViewMode = (filters.view ?? "galerija") as ViewMode;
+  const perPage = filters.perPage ?? 24;
+
   const canReset =
     (filters.brand?.length ?? 0) > 0 ||
     (filters.size?.length ?? 0) > 0 ||
@@ -112,7 +167,9 @@ export default function CategoryListingClient({ slugPath }: Props) {
     filters.min != null ||
     filters.max != null ||
     (filters.sort ?? "podrazumevano") !== "podrazumevano" ||
-    (filters.page ?? 1) !== 1;
+    (filters.page ?? 1) !== 1 ||
+    (filters.perPage ?? 24) !== 24 ||
+    (filters.view ?? "galerija") !== "galerija";
 
   const chips: ChipItem[] = React.useMemo(() => {
     const out: ChipItem[] = [];
@@ -145,12 +202,22 @@ export default function CategoryListingClient({ slugPath }: Props) {
       out.push({ kind: "sort", label: `Sort: ${label}` });
     }
 
+    if ((filters.view ?? "galerija") !== "galerija") {
+      out.push({ kind: "view", label: `Prikaz: ${(filters.view ?? "galerija") === "lista" ? "Lista" : "Galerija"}` });
+    }
+
+    if ((filters.perPage ?? 24) !== 24) {
+      out.push({ kind: "perPage", label: `Po strani: ${filters.perPage}` });
+    }
+
     return out;
   }, [filters, facetByCode, minAvail, maxAvail]);
 
   const removeChip = (c: ChipItem) => {
     if (c.kind === "price") return setPrice(null, null);
     if (c.kind === "sort") return setSort("podrazumevano");
+    if (c.kind === "view") return setView("galerija");
+    if (c.kind === "perPage") return setPerPage(24);
     if (c.kind === "facet") return removeMulti(c.code as any, c.value);
   };
 
@@ -160,7 +227,6 @@ export default function CategoryListingClient({ slugPath }: Props) {
     .filter((f): f is Facet => !!f && (f.options?.length ?? 0) > 0);
 
   const page = data?.pagination?.page ?? (filters.page ?? 1);
-  const perPage = data?.pagination?.per_page ?? 24;
   const total = data?.pagination?.total ?? 0;
   const pageCount = Math.max(1, Math.ceil(total / Math.max(1, perPage)));
 
@@ -180,7 +246,6 @@ export default function CategoryListingClient({ slugPath }: Props) {
             </button>
           </div>
 
-          {/* CENA — ne collapsible, i guramo SVE ispod nje na dole */}
           <div className="rounded-2xl border bg-white px-4 py-3">
             <div className="text-sm font-semibold">Cena</div>
 
@@ -195,13 +260,13 @@ export default function CategoryListingClient({ slugPath }: Props) {
                   if (!sliderReady) return;
                   const next: [number, number] = [Math.min(v[0], v[1]), Math.max(v[0], v[1])];
                   setDraftPrice(next);
-                  setPriceDraft(next[0], next[1]); // bez URL dok vučeš
+                  setPriceDraft(next[0], next[1]);
                 }}
                 onValueCommit={(v) => {
                   if (!sliderReady) return;
                   const next: [number, number] = [Math.min(v[0], v[1]), Math.max(v[0], v[1])];
                   setDraftPrice(null);
-                  setPrice(next[0], next[1]); // URL + refetch tek na puštanje
+                  setPrice(next[0], next[1]);
                 }}
                 format={formatRSD}
               />
@@ -210,7 +275,6 @@ export default function CategoryListingClient({ slugPath }: Props) {
             </div>
           </div>
 
-          {/* ✅ OVO je ključno: “spacer” koji pomera Brend i ostale nadole */}
           <div className="h-10" />
 
           {facetSections.map((facet) => {
@@ -267,22 +331,44 @@ export default function CategoryListingClient({ slugPath }: Props) {
           </div>
 
           <div className="rounded-2xl border bg-white p-4">
-            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-              <div className="text-sm text-black/60">{q.isLoading ? "Učitavanje…" : `Ukupno: ${total} proizvoda`}</div>
+            <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+              <div className="flex items-center gap-2 text-sm text-black/60">
+                <span>Ukupno: {total} proizvoda</span>
+                {q.isFetching ? <span className="h-2 w-2 rounded-full bg-black/30 animate-pulse" /> : null}
+              </div>
 
-              <div className="flex items-center gap-2">
-                <div className="text-sm font-semibold">Sort</div>
-                <select
-                  className="h-9 rounded-full border bg-white px-3 text-sm"
-                  value={filters.sort ?? "podrazumevano"}
-                  onChange={(e) => setSort(e.target.value as SortKey)}
-                >
-                  {SORT_OPTIONS.map((opt) => (
-                    <option key={opt.key} value={opt.key} disabled={opt.disabled}>
-                      {opt.label}
-                    </option>
-                  ))}
-                </select>
+              <div className="flex flex-wrap items-center gap-3">
+                <ViewToggle value={view} onChange={setView} />
+
+                <div className="flex items-center gap-2">
+                  <div className="text-sm font-semibold">Po strani</div>
+                  <select
+                    className="h-9 rounded-full border bg-white px-3 text-sm"
+                    value={perPage}
+                    onChange={(e) => setPerPage(Number(e.target.value))}
+                  >
+                    {PER_PAGE_OPTIONS.map((n) => (
+                      <option key={n} value={n}>
+                        {n}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <div className="text-sm font-semibold">Sort</div>
+                  <select
+                    className="h-9 rounded-full border bg-white px-3 text-sm"
+                    value={filters.sort ?? "podrazumevano"}
+                    onChange={(e) => setSort(e.target.value as SortKey)}
+                  >
+                    {SORT_OPTIONS.map((opt) => (
+                      <option key={opt.key} value={opt.key} disabled={opt.disabled}>
+                        {opt.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
               </div>
             </div>
 
@@ -294,22 +380,19 @@ export default function CategoryListingClient({ slugPath }: Props) {
               </div>
             ) : (
               <>
-                <div className="grid grid-cols-2 gap-4 md:grid-cols-3 xl:grid-cols-4">
-                  {(data?.products ?? []).map((p) => (
-                    <div key={p.id} className="rounded-2xl border bg-white p-3 hover:shadow-sm">
-                      <div className="aspect-square w-full overflow-hidden rounded-xl bg-black/5">
-                        {p.image_grid_url ? (
-                          // eslint-disable-next-line @next/next/no-img-element
-                          <img src={p.image_grid_url} alt={p.name} className="h-full w-full object-cover" loading="lazy" />
-                        ) : null}
-                      </div>
-                      <div className="mt-3 flex flex-col gap-1">
-                        <div className="text-sm font-semibold">{p.name}</div>
-                        <div className="mt-1 text-sm font-bold">{formatRSD(p.price_rsd)}</div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
+                {view === "galerija" ? (
+                  <div className="grid grid-cols-2 gap-4 md:grid-cols-3 xl:grid-cols-4">
+                    {(data?.products ?? []).map((p) => (
+                      <ProductCardGallery key={p.id} slugPath={slugPath} p={p} />
+                    ))}
+                  </div>
+                ) : (
+                  <div className="flex flex-col gap-3">
+                    {(data?.products ?? []).map((p) => (
+                      <ProductRowList key={p.id} slugPath={slugPath} p={p} />
+                    ))}
+                  </div>
+                )}
 
                 <div className="mt-6 flex items-center justify-center gap-2">
                   <button

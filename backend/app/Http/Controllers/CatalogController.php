@@ -8,25 +8,12 @@ use Illuminate\Support\Facades\Schema;
 
 class CatalogController extends Controller
 {
-    /**
-     * Uzimanje multi parametara iz query string-a.
-     *
-     * Problem:
-     * - PHP/Laravel default: brand=lelo&brand=durex -> poslednja vrednost pregazi prethodnu.
-     * - Request::getQueryString() često vraća NORMALIZOVAN query (iz već parsiranih parametara) -> duplikati izgubljeni.
-     *
-     * Rešenje:
-     * - Čitamo RAW query iz $_SERVER['QUERY_STRING'] (Laravel: $request->server('QUERY_STRING')).
-     * - Podržavamo i key i key[].
-     */
     private function qArray(Request $request, string $key): array
     {
         $out = [];
 
-        // 1) RAW query string iz server varijable (ovo čuva duplikate!)
         $raw = (string)($request->server('QUERY_STRING') ?? '');
         if ($raw === '') {
-            // fallback (može biti normalizovan, ali bolje nego ništa)
             $raw = (string)($request->getQueryString() ?? '');
         }
 
@@ -41,7 +28,6 @@ class CatalogController extends Controller
             }
         }
 
-        // 2) fallback na Laravel query (radi za key[]=a&key[]=b ili za single)
         $v = $request->query($key, null);
         if (is_array($v)) {
             foreach ($v as $x) $out[] = $x;
@@ -49,7 +35,6 @@ class CatalogController extends Controller
             $out[] = $v;
         }
 
-        // clean + unique
         $out = array_map('strval', $out);
         $out = array_map('trim', $out);
         $out = array_values(array_filter($out, fn ($x) => $x !== ''));
@@ -58,15 +43,6 @@ class CatalogController extends Controller
         return $out;
     }
 
-    /**
-     * GET /api/category/{slug_path}/products
-     *
-     * Query:
-     *  - facets: ?brand=lelo&brand=durex&size=xl&color=black ...
-     *  - price:  ?min=1000&max=9000
-     *  - sort:   ?sort=cena_gore|cena_dole|najnovije (future: popularno|snizenje|ocena)
-     *  - page/per_page
-     */
     public function categoryProducts(Request $request, string $slug_path)
     {
         $category = DB::table('categories')
@@ -102,10 +78,10 @@ class CatalogController extends Controller
         $min = $request->query('min');
         $max = $request->query('max');
 
-        // Sort (srpski)
+        // Sort
         $sort = trim((string)$request->query('sort', ''));
 
-        // Brand selection (slugovi ili ID) - qArray hvata ponovljene parametre
+        // Brand selection
         $brandSelected = $this->qArray($request, 'brand');
 
         $brandIdsSelected = [];
@@ -134,7 +110,7 @@ class CatalogController extends Controller
         // Active attribute codes for this category
         $attributeCodes = $this->getActiveAttributeCodesForCategory((int)$category->id);
 
-        // ✅ FIX: ukloni rezervisane kodove da ne dupliramo facet-e (npr. brand)
+        // remove reserved
         $reserved = ['brand', 'min', 'max', 'sort', 'page', 'per_page'];
         $attributeCodes = array_values(array_filter($attributeCodes, fn ($c) => !in_array((string)$c, $reserved, true)));
 
@@ -145,13 +121,6 @@ class CatalogController extends Controller
             if (!empty($vals)) $selected[(string)$code] = $vals;
         }
 
-        /**
-         * Apply filters to $q. If $excludeCode is provided, DO NOT apply that facet.
-         * Used for "exclude self" facet counts.
-         *
-         * Special excludeCode:
-         * - 'price' -> ne primenjuj min/max
-         */
         $applyAllFilters = function ($q, ?string $excludeCode = null) use ($selected, $min, $max, $brandIdsSelected) {
             // Price
             if ($excludeCode !== 'price' && Schema::hasColumn('products', 'price_rsd')) {
@@ -159,12 +128,12 @@ class CatalogController extends Controller
                 if ($max !== null && is_numeric($max)) $q->where('products.price_rsd', '<=', (int)$max);
             }
 
-            // Brand (OR preko brand_id list-e)
+            // Brand
             if ($excludeCode !== 'brand' && !empty($brandIdsSelected) && Schema::hasColumn('products', 'brand_id')) {
                 $q->whereIn('products.brand_id', $brandIdsSelected);
             }
 
-            // Attribute facets (AND između različitih code-ova, OR unutar jednog code-a)
+            // Attribute facets
             if (Schema::hasTable('attributes') && Schema::hasTable('attribute_values') && Schema::hasTable('product_attribute_values')) {
                 foreach ($selected as $code => $values) {
                     if ($excludeCode !== null && $code === $excludeCode) continue;
@@ -188,7 +157,7 @@ class CatalogController extends Controller
         $q = clone $base;
         $q = $applyAllFilters($q);
 
-        // SORT (srpski)
+        // SORT
         if ($sort === 'cena_gore' && Schema::hasColumn('products', 'price_rsd')) {
             $q->orderBy('products.price_rsd', 'asc')->orderBy('products.id', 'desc');
         } elseif ($sort === 'cena_dole' && Schema::hasColumn('products', 'price_rsd')) {
@@ -199,12 +168,6 @@ class CatalogController extends Controller
             } else {
                 $q->orderBy('products.id', 'desc');
             }
-        } elseif ($sort === 'popularno') {
-            $q->orderBy('products.id', 'desc');
-        } elseif ($sort === 'snizenje') {
-            $q->orderBy('products.id', 'desc');
-        } elseif ($sort === 'ocena') {
-            $q->orderBy('products.id', 'desc');
         } else {
             $q->orderBy('products.id', 'desc');
         }
@@ -212,7 +175,7 @@ class CatalogController extends Controller
         // Total distinct products
         $total = (clone $q)->distinct('products.id')->count('products.id');
 
-        // Products page
+        // Products page rows
         $rows = (clone $q)
             ->select('products.*')
             ->distinct()
@@ -223,15 +186,87 @@ class CatalogController extends Controller
         $nameCol = Schema::hasColumn('products', 'name') ? 'name' : (Schema::hasColumn('products', 'title') ? 'title' : null);
         $slugCol = Schema::hasColumn('products', 'slug') ? 'slug' : null;
         $priceCol = Schema::hasColumn('products', 'price_rsd') ? 'price_rsd' : (Schema::hasColumn('products', 'price') ? 'price' : null);
-        $imgCol = Schema::hasColumn('products', 'image_grid_url') ? 'image_grid_url' : null;
+        $imgCol = Schema::hasColumn('products', 'image_grid_url') ? 'image_grid_url' : (Schema::hasColumn('products', 'main_image_url') ? 'main_image_url' : null);
 
-        $products = $rows->map(function ($p) use ($nameCol, $slugCol, $priceCol, $imgCol) {
+        // --- NEW: fetch up to 5 images per product (WEBP preferred) in ONE query ---
+        $productIds = $rows->pluck('id')->all();
+
+        $imagesByProduct = [];
+        if (!empty($productIds) && Schema::hasTable('product_images')) {
+            // detect best columns
+            $webpGrid = Schema::hasColumn('product_images', 'grid_url_webp') ? 'grid_url_webp' : null;
+            $webpAny  = Schema::hasColumn('product_images', 'url_webp') ? 'url_webp' : null;
+
+            $fallbackUrl =
+                Schema::hasColumn('product_images', 'url') ? 'url' :
+                (Schema::hasColumn('product_images', 'image_url') ? 'image_url' :
+                (Schema::hasColumn('product_images', 'path') ? 'path' : null));
+
+            $sortCol = Schema::hasColumn('product_images', 'sort_order') ? 'sort_order' : null;
+
+            $selectCols = ['product_id'];
+            if ($webpGrid) $selectCols[] = $webpGrid;
+            if ($webpAny) $selectCols[] = $webpAny;
+            if ($fallbackUrl) $selectCols[] = $fallbackUrl;
+            if ($sortCol) $selectCols[] = $sortCol;
+
+            $imgRows = DB::table('product_images')
+                ->whereIn('product_id', $productIds)
+                ->when($sortCol, fn($qq) => $qq->orderBy($sortCol))
+                ->orderBy('id')
+                ->get($selectCols);
+
+            foreach ($imgRows as $r) {
+                $pid = (int)$r->product_id;
+
+                // choose url: grid webp > any webp > fallback
+                $url = null;
+                if ($webpGrid && !empty($r->{$webpGrid})) $url = (string)$r->{$webpGrid};
+                elseif ($webpAny && !empty($r->{$webpAny})) $url = (string)$r->{$webpAny};
+                elseif ($fallbackUrl && !empty($r->{$fallbackUrl})) $url = (string)$r->{$fallbackUrl};
+
+                if (!$url) continue;
+
+                if (!isset($imagesByProduct[$pid])) $imagesByProduct[$pid] = [];
+                if (count($imagesByProduct[$pid]) >= 5) continue;
+
+                // uniq per product
+                if (!in_array($url, $imagesByProduct[$pid], true)) {
+                    $imagesByProduct[$pid][] = $url;
+                }
+            }
+        }
+        // --- END NEW ---
+
+        $products = $rows->map(function ($p) use ($nameCol, $slugCol, $priceCol, $imgCol, $imagesByProduct) {
+            $pid = (int)$p->id;
+
+            $main = $imgCol ? ($p->{$imgCol} ?? null) : null;
+            $imgs = $imagesByProduct[$pid] ?? [];
+
+            // fallback: ako nemamo slike iz product_images, bar ubaci main
+            if ($main && (empty($imgs) || !in_array($main, $imgs, true))) {
+                array_unshift($imgs, (string)$main);
+            }
+
+            // uniq + max 5
+            $out = [];
+            $seen = [];
+            foreach ($imgs as $u) {
+                $u = trim((string)$u);
+                if ($u === '' || isset($seen[$u])) continue;
+                $seen[$u] = true;
+                $out[] = $u;
+                if (count($out) >= 5) break;
+            }
+
             return [
                 'id' => $p->id,
                 'name' => $nameCol ? ($p->{$nameCol} ?? '') : '',
                 'slug' => $slugCol ? ($p->{$slugCol} ?? (string)$p->id) : (string)$p->id,
                 'price_rsd' => $priceCol ? (int)($p->{$priceCol} ?? 0) : 0,
-                'image_grid_url' => $imgCol ? ($p->{$imgCol} ?? null) : null,
+                'image_grid_url' => $out[0] ?? ($main ? (string)$main : null),
+                'images' => $out, // ✅ NEW for list view mini gallery
             ];
         })->values();
 
@@ -262,8 +297,9 @@ class CatalogController extends Controller
                 ->orderBy('label')
                 ->get();
 
+            // NOTE: backend trenutno vraća SR code "brend" (kao što si pokazao)
             $facets[] = [
-                'code' => 'brand',
+                'code' => 'brend',
                 'label' => 'Brend',
                 'type' => 'multi',
                 'options' => $opts->map(fn ($x) => [
@@ -275,11 +311,7 @@ class CatalogController extends Controller
         }
 
         // 2) Attribute facets (exclude self)
-        if (
-            Schema::hasTable('attributes') &&
-            Schema::hasTable('attribute_values') &&
-            Schema::hasTable('product_attribute_values')
-        ) {
+        if (Schema::hasTable('attributes') && Schema::hasTable('attribute_values') && Schema::hasTable('product_attribute_values')) {
             $attrs = DB::table('attributes')
                 ->whereIn('code', $attributeCodes)
                 ->where('is_active', 1)
@@ -306,6 +338,7 @@ class CatalogController extends Controller
                     ->orderBy('av.label')
                     ->get();
 
+                // backend šalje code-ove kao što su u bazi (ti si već prebacio na SR: velicina/boja/materijal)
                 $facets[] = [
                     'code' => $a->code,
                     'label' => $a->name,
@@ -319,8 +352,7 @@ class CatalogController extends Controller
             }
         }
 
-        // PRICE META:
-        // min/max dostupni u setu posle filtera (brand + atributi), ali BEZ price filtera.
+        // PRICE META (bez price filtera)
         $priceMeta = null;
         if (Schema::hasColumn('products', 'price_rsd')) {
             $pq = clone $base;
@@ -331,6 +363,7 @@ class CatalogController extends Controller
             $priceMeta = [
                 'min_available' => $minAvail !== null ? (int)$minAvail : null,
                 'max_available' => $maxAvail !== null ? (int)$maxAvail : null,
+                'mode' => 'mp_gross_regular',
             ];
         }
 
@@ -353,11 +386,6 @@ class CatalogController extends Controller
         ]);
     }
 
-    /**
-     * Attributes available for this category:
-     * - if category_attribute exists -> use mapping
-     * - else fallback to all active attributes
-     */
     private function getActiveAttributeCodesForCategory(int $categoryId): array
     {
         if (Schema::hasTable('category_attribute')) {
@@ -383,7 +411,6 @@ class CatalogController extends Controller
         return [];
     }
 
-    // categories tree (mega meni)
     public function categoriesTree()
     {
         $rows = DB::table('categories')
@@ -419,7 +446,6 @@ class CatalogController extends Controller
         return response()->json(['items' => $build(0, 0)]);
     }
 
-    // resolve (future)
     public function resolve(Request $request)
     {
         $path = trim((string)$request->query('path', ''), "/");

@@ -15,9 +15,25 @@ class Product extends Model
         'rezime',
         'opis_html',
 
+        // Legacy fields (ostavljeno radi backward compat dok ne pređemo full na pricing service)
         'price_rsd',
         'compare_at_rsd',
         'is_on_sale',
+
+        // New pricing inputs (source-of-truth ulazi)
+        'cost_rsd',
+
+        'mp_margin_percent',
+        'mp_margin_fixed_rsd',
+
+        'vp_margin_percent',
+        'vp_margin_fixed_rsd',
+
+        'vat_percent',
+
+        'mp_discount_active',
+        'mp_discount_percent',
+        'mp_discount_fixed_rsd',
 
         'is_active',
         'in_stock',
@@ -32,6 +48,33 @@ class Product extends Model
         'noindex',
 
         'main_image_url',
+    ];
+
+    protected $casts = [
+        // Legacy
+        'is_on_sale' => 'boolean',
+        'price_rsd' => 'integer',
+        'compare_at_rsd' => 'integer',
+
+        // Flags
+        'is_active' => 'boolean',
+        'in_stock' => 'boolean',
+        'noindex' => 'boolean',
+
+        // Pricing
+        'cost_rsd' => 'integer',
+
+        'mp_margin_percent' => 'decimal:2',
+        'mp_margin_fixed_rsd' => 'integer',
+
+        'vp_margin_percent' => 'decimal:2',
+        'vp_margin_fixed_rsd' => 'integer',
+
+        'vat_percent' => 'decimal:2',
+
+        'mp_discount_active' => 'boolean',
+        'mp_discount_percent' => 'decimal:2',
+        'mp_discount_fixed_rsd' => 'integer',
     ];
 
     public function slike(): HasMany

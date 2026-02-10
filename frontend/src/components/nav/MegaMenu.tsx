@@ -1,9 +1,12 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo, useState } from "react";
+import { useMemo, useState, useCallback, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
+import { useQueryClient } from "@tanstack/react-query";
+
 import { useCategoryTree, type CategoryNode } from "@/hooks/useCategoryTree";
+import { categoryProductsQueryKey, fetchCategoryProducts } from "@/hooks/useCategoryProducts";
 
 function limitTop(items: CategoryNode[]) {
   return items.slice(0, 14);
@@ -20,10 +23,14 @@ function findNodeById(items: CategoryNode[], id: number | null): CategoryNode | 
   return null;
 }
 
+const DEFAULT_FILTERS = {} as any;
+
 export function MegaMenu() {
   const q = useCategoryTree();
   const items = q.data?.items ?? [];
   const top = useMemo(() => limitTop(items), [items]);
+
+  const qc = useQueryClient();
 
   const [open, setOpen] = useState(false);
   const [activeId, setActiveId] = useState<number | null>(null);
@@ -34,20 +41,40 @@ export function MegaMenu() {
 
   const activeChildren = active?.children ?? [];
 
+  const prefetchCategory = useCallback(
+    (slugPath?: string | null) => {
+      if (!slugPath) return;
+
+      qc.prefetchQuery({
+        queryKey: categoryProductsQueryKey(slugPath, DEFAULT_FILTERS),
+        queryFn: ({ signal }) => fetchCategoryProducts(slugPath, DEFAULT_FILTERS, signal),
+        staleTime: 60_000,
+      });
+    },
+    [qc]
+  );
+
+  // ✅ DEV-friendly: warm prefetch samo za active (1 request), da ne okida gomilu compile-a
+  useEffect(() => {
+    if (!open) return;
+    prefetchCategory(active?.slug_path);
+  }, [open, active?.slug_path, prefetchCategory]);
+
+  const openMenu = () => {
+    setOpen(true);
+    setActiveId((prev) => prev ?? top[0]?.id ?? null);
+  };
+
+  const closeMenu = () => setOpen(false);
+
   return (
-    <div
-      className="relative"
-      onMouseEnter={() => {
-        setOpen(true);
-        setActiveId((prev) => prev ?? top[0]?.id ?? null);
-      }}
-      onMouseLeave={() => setOpen(false)}
-    >
+    <div className="relative" onMouseEnter={openMenu} onMouseLeave={closeMenu}>
       <button
         type="button"
         className="text-sm font-medium px-3 py-2 rounded-full hover:bg-black/5"
         aria-haspopup="menu"
         aria-expanded={open}
+        onFocus={openMenu}
       >
         Kategorije
       </button>
@@ -64,12 +91,9 @@ export function MegaMenu() {
           >
             <div className="w-[980px] rounded-2xl border bg-white shadow-lg overflow-hidden">
               <div className="grid grid-cols-12">
-                {/* LEFT: top level */}
                 <div className="col-span-3 border-r bg-white">
                   <div className="p-3">
-                    <div className="text-xs uppercase tracking-wide text-black/50 mb-2">
-                      Kategorije
-                    </div>
+                    <div className="text-xs uppercase tracking-wide text-black/50 mb-2">Kategorije</div>
 
                     {q.isLoading ? (
                       <div className="space-y-2">
@@ -87,7 +111,14 @@ export function MegaMenu() {
                             <button
                               key={c.id}
                               type="button"
-                              onMouseEnter={() => setActiveId(c.id)}
+                              onMouseEnter={() => {
+                                setActiveId(c.id);
+                                prefetchCategory(c.slug_path);
+                              }}
+                              onFocus={() => {
+                                setActiveId(c.id);
+                                prefetchCategory(c.slug_path);
+                              }}
                               className={`w-full text-left px-3 py-2 rounded-lg text-sm transition ${
                                 isActive ? "bg-black text-white" : "hover:bg-black/5"
                               }`}
@@ -101,7 +132,6 @@ export function MegaMenu() {
                   </div>
                 </div>
 
-                {/* RIGHT: columns */}
                 <div className="col-span-9 p-4">
                   {!active ? (
                     <div className="text-sm text-black/60">—</div>
@@ -111,6 +141,10 @@ export function MegaMenu() {
                         <div className="text-sm font-semibold">{active.name}</div>
                         <Link
                           href={`/${active.slug_path}`}
+                          prefetch
+                          onMouseEnter={() => prefetchCategory(active.slug_path)}
+                          onFocus={() => prefetchCategory(active.slug_path)}
+                          onTouchStart={() => prefetchCategory(active.slug_path)}
                           className="text-sm underline text-black/70 hover:text-black"
                         >
                           Pogledaj sve
@@ -125,6 +159,10 @@ export function MegaMenu() {
                             <div key={child.id} className="min-w-0">
                               <Link
                                 href={`/${child.slug_path}`}
+                                prefetch
+                                onMouseEnter={() => prefetchCategory(child.slug_path)}
+                                onFocus={() => prefetchCategory(child.slug_path)}
+                                onTouchStart={() => prefetchCategory(child.slug_path)}
                                 className="text-sm font-medium hover:underline block truncate"
                               >
                                 {child.name}
@@ -135,6 +173,10 @@ export function MegaMenu() {
                                   <Link
                                     key={leaf.id}
                                     href={`/${leaf.slug_path}`}
+                                    prefetch
+                                    onMouseEnter={() => prefetchCategory(leaf.slug_path)}
+                                    onFocus={() => prefetchCategory(leaf.slug_path)}
+                                    onTouchStart={() => prefetchCategory(leaf.slug_path)}
                                     className="text-sm text-black/70 hover:text-black block truncate"
                                   >
                                     {leaf.name}
@@ -150,12 +192,9 @@ export function MegaMenu() {
                 </div>
               </div>
 
-              {/* bottom strip */}
               <div className="border-t px-4 py-3 flex items-center justify-between">
-                <div className="text-xs text-black/50">
-                  Hover = instant, klik = navigacija
-                </div>
-                <Link href="/" className="text-xs underline text-black/70 hover:text-black">
+                <div className="text-xs text-black/50">Hover = prefetch, klik = instant</div>
+                <Link href="/" prefetch className="text-xs underline text-black/70 hover:text-black">
                   Početna
                 </Link>
               </div>
