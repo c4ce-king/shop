@@ -7,17 +7,22 @@ type Props = { params: Promise<{ slug?: string[] }> };
 type ResolveResponse =
   | { type: "home" }
   | { type: "category"; slug_path: string; category_id: number }
-  | { type: "product"; slug: string }
+  | { type: "product"; slug: string; product_id?: number; category_slug_path?: string | null }
   | { type: "not_found" };
 
-async function apiFetchJson(path: string) {
+const RESOLVE_REVALIDATE_SECONDS = 3600; // 1h (safe: ne zavisi od filtera)
+
+async function apiFetchJson(path: string, opts?: { revalidateSeconds?: number; noStore?: boolean }) {
   const base = process.env.BACKEND_URL;
   if (!base) throw new Error("BACKEND_URL missing in .env.local");
 
+  const noStore = opts?.noStore ?? false;
+  const revalidateSeconds = opts?.revalidateSeconds;
+
   const res = await fetch(`${base}${path}`, {
-    // metadata treba da bude “fresh enough”
-    cache: "no-store",
     headers: { Accept: "application/json" },
+    ...(noStore ? { cache: "no-store" as const } : {}),
+    ...(revalidateSeconds != null ? { next: { revalidate: revalidateSeconds } } : {}),
   });
 
   if (!res.ok) return null;
@@ -26,22 +31,12 @@ async function apiFetchJson(path: string) {
 
 async function resolvePath(slugPath: string): Promise<ResolveResponse | null> {
   const q = encodeURIComponent(slugPath);
-  return apiFetchJson(`/api/resolve?path=${q}`);
+
+  // ✅ Keširamo resolve jer se ne menja na filter klik (menja se samo query string)
+  return apiFetchJson(`/api/resolve?path=${q}`, { revalidateSeconds: RESOLVE_REVALIDATE_SECONDS });
 }
 
-async function fetchCategoryName(slugPath: string): Promise<string | null> {
-  // categoryProducts vraća category.name
-  const data = await apiFetchJson(`/api/category/${slugPath}/products?per_page=1`);
-  const name = data?.category?.name;
-  return typeof name === "string" && name.trim() ? name.trim() : null;
-}
-
-async function fetchProductName(productSlug: string): Promise<string | null> {
-  const data = await apiFetchJson(`/api/product/${productSlug}`);
-  const name = data?.name ?? data?.title;
-  return typeof name === "string" && name.trim() ? name.trim() : null;
-}
-
+// ✅ Najbrže: bez backend poziva u metadata (da filter klik ne “ubija” UX)
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const { slug } = await params;
   const parts = slug ?? [];
@@ -49,28 +44,9 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
 
   if (!slugPath) return { title: "Shop" };
 
-  // probaj resolve (ako je implementiran)
-  const r = await resolvePath(slugPath);
-
-  // Ako je category:
-  if (r?.type === "category") {
-    const catName = await fetchCategoryName(r.slug_path);
-    return { title: catName ? `${catName} | Shop` : `Shop` };
-  }
-
-  // Ako je product:
-  // (čak i ako resolve ne zna product, fallback heuristika: poslednji segment je product slug)
-  const productSlug = parts.at(-1) ?? slugPath;
-  const catPath = parts.slice(0, -1).join("/");
-
-  const productName = await fetchProductName(productSlug);
-  const catName = catPath ? await fetchCategoryName(catPath) : null;
-
-  if (productName && catName) return { title: `${catName} — ${productName} | Shop` };
-  if (productName) return { title: `${productName} | Shop` };
-  if (catName) return { title: `${catName} | Shop` };
-
-  return { title: "Shop" };
+  // minimalno, bez fetch
+  const last = parts.at(-1) ?? "Shop";
+  return { title: `${decodeURIComponent(last)} | Shop` };
 }
 
 export default async function CatchAllPage({ params }: Props) {
@@ -78,21 +54,22 @@ export default async function CatchAllPage({ params }: Props) {
   const parts = slug ?? [];
   const slugPath = parts.join("/");
 
-  // home
   if (!slugPath) return <CategoryListingClient slugPath="" />;
 
-  // resolve (optional)
   const r = await resolvePath(slugPath);
 
-  // category
   if (r?.type === "category") {
     return <CategoryListingClient slugPath={r.slug_path} />;
   }
 
-  // product (fallback heuristika)
+  if (r?.type === "product") {
+    return <ProductPageClient slug={r.slug} />;
+  }
+
+  // fallback heuristika
   const productSlug = parts.at(-1) ?? slugPath;
 
-  // cat listing ako ima samo 1 segment? (po želji)
+  // 1 segment bez resolve-hit-a tretiramo kao category
   if (parts.length <= 1) {
     return <CategoryListingClient slugPath={slugPath} />;
   }

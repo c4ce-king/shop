@@ -54,7 +54,6 @@ export function MegaMenu() {
     [qc]
   );
 
-  // ✅ DEV-friendly: warm prefetch samo za active (1 request), da ne okida gomilu compile-a
   useEffect(() => {
     if (!open) return;
     prefetchCategory(active?.slug_path);
@@ -71,7 +70,7 @@ export function MegaMenu() {
     <div className="relative" onMouseEnter={openMenu} onMouseLeave={closeMenu}>
       <button
         type="button"
-        className="text-sm font-medium px-3 py-2 rounded-full hover:bg-black/5"
+        className="mic-btn h-9 px-3 text-[12px] font-semibold"
         aria-haspopup="menu"
         aria-expanded={open}
         onFocus={openMenu}
@@ -93,7 +92,7 @@ export function MegaMenu() {
               <div className="grid grid-cols-12">
                 <div className="col-span-3 border-r bg-white">
                   <div className="p-3">
-                    <div className="text-xs uppercase tracking-wide text-black/50 mb-2">Kategorije</div>
+                    <div className="text-[11px] uppercase tracking-wide mic-muted-2 mb-2">Kategorije</div>
 
                     {q.isLoading ? (
                       <div className="space-y-2">
@@ -102,7 +101,7 @@ export function MegaMenu() {
                         ))}
                       </div>
                     ) : top.length === 0 ? (
-                      <div className="text-sm text-black/60">Nema kategorija.</div>
+                      <div className="text-[12px] mic-muted">Nema kategorija.</div>
                     ) : (
                       <div className="space-y-1">
                         {top.map((c) => {
@@ -119,9 +118,10 @@ export function MegaMenu() {
                                 setActiveId(c.id);
                                 prefetchCategory(c.slug_path);
                               }}
-                              className={`w-full text-left px-3 py-2 rounded-lg text-sm transition ${
-                                isActive ? "bg-black text-white" : "hover:bg-black/5"
-                              }`}
+                              className={[
+                                "w-full text-left px-3 py-2 rounded-lg text-[12px] font-medium transition",
+                                isActive ? "bg-black text-white" : "hover:bg-black/5",
+                              ].join(" ")}
                             >
                               {c.name}
                             </button>
@@ -134,25 +134,26 @@ export function MegaMenu() {
 
                 <div className="col-span-9 p-4">
                   {!active ? (
-                    <div className="text-sm text-black/60">—</div>
+                    <div className="text-[12px] mic-muted">—</div>
                   ) : (
                     <div>
                       <div className="flex items-center justify-between mb-3">
-                        <div className="text-sm font-semibold">{active.name}</div>
+                        <div className="text-[13px] font-semibold">{active.name}</div>
                         <Link
                           href={`/${active.slug_path}`}
                           prefetch
                           onMouseEnter={() => prefetchCategory(active.slug_path)}
                           onFocus={() => prefetchCategory(active.slug_path)}
                           onTouchStart={() => prefetchCategory(active.slug_path)}
-                          className="text-sm underline text-black/70 hover:text-black"
+                          onClick={() => setOpen(false)}
+                          className="text-[12px] underline text-black/70 hover:text-black"
                         >
                           Pogledaj sve
                         </Link>
                       </div>
 
                       {activeChildren.length === 0 ? (
-                        <div className="text-sm text-black/60">Nema podkategorija.</div>
+                        <div className="text-[12px] mic-muted">Nema podkategorija.</div>
                       ) : (
                         <div className="grid grid-cols-3 gap-4">
                           {activeChildren.slice(0, 9).map((child) => (
@@ -163,7 +164,8 @@ export function MegaMenu() {
                                 onMouseEnter={() => prefetchCategory(child.slug_path)}
                                 onFocus={() => prefetchCategory(child.slug_path)}
                                 onTouchStart={() => prefetchCategory(child.slug_path)}
-                                className="text-sm font-medium hover:underline block truncate"
+                                onClick={() => setOpen(false)}
+                                className="text-[12px] font-semibold hover:underline block truncate"
                               >
                                 {child.name}
                               </Link>
@@ -177,7 +179,8 @@ export function MegaMenu() {
                                     onMouseEnter={() => prefetchCategory(leaf.slug_path)}
                                     onFocus={() => prefetchCategory(leaf.slug_path)}
                                     onTouchStart={() => prefetchCategory(leaf.slug_path)}
-                                    className="text-sm text-black/70 hover:text-black block truncate"
+                                    onClick={() => setOpen(false)}
+                                    className="text-[12px] text-black/70 hover:text-black block truncate"
                                   >
                                     {leaf.name}
                                   </Link>
@@ -193,8 +196,8 @@ export function MegaMenu() {
               </div>
 
               <div className="border-t px-4 py-3 flex items-center justify-between">
-                <div className="text-xs text-black/50">Hover = prefetch, klik = instant</div>
-                <Link href="/" prefetch className="text-xs underline text-black/70 hover:text-black">
+                <div className="text-[11px] mic-muted-2">Hover = prefetch, klik = instant</div>
+                <Link href="/" prefetch className="text-[11px] underline text-black/70 hover:text-black" onClick={() => setOpen(false)}>
                   Početna
                 </Link>
               </div>

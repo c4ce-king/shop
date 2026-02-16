@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { usePathname, useSearchParams } from "next/navigation";
 
 export type ViewMode = "galerija" | "lista";
 
@@ -17,7 +17,7 @@ export type SortKey =
 export type ListingFilters = {
   brand?: string[];
   size?: string[];
-  color?: string[]; // canonical: backend codes (red/black/...)
+  color?: string[]; // canonical: backend codes (red/black/gray...)
   material?: string[]; // canonical: backend codes (latex/leather/...)
   min?: number | null;
   max?: number | null;
@@ -47,7 +47,6 @@ function parseNumber(v: string | null): number | null {
 }
 
 function normKeyValue(v: string) {
-  // normalize za mapiranje (case-insensitive, trim)
   return String(v ?? "")
     .trim()
     .toLowerCase()
@@ -60,10 +59,6 @@ function normKeyValue(v: string) {
  *  SR <-> CODE mapping
  * -------------------------
  * URL (SR latin) <-> canonical code (backend)
- *
- * Napomena:
- * - URL će biti SR latin (bez dijakritike): crvena, crna, koza, staklo...
- * - Canonical u filterima ostaje backend kod: red, black, leather, glass...
  */
 
 const COLOR_CODE_TO_SR: Record<string, string> = {
@@ -71,8 +66,7 @@ const COLOR_CODE_TO_SR: Record<string, string> = {
   white: "bela",
   red: "crvena",
   green: "zelena",
-  gray: "siva",
-  grey: "siva",
+  gray: "siva", // canonical
   blue: "plava",
   pink: "roze",
   purple: "ljubicasta",
@@ -82,11 +76,15 @@ const COLOR_CODE_TO_SR: Record<string, string> = {
   transparent: "providna",
 };
 
+// alias -> canonical (npr. grey -> gray)
+const COLOR_CODE_ALIASES: Record<string, string> = {
+  grey: "gray",
+};
+
 const COLOR_SR_TO_CODE: Record<string, string> = Object.fromEntries(
   Object.entries(COLOR_CODE_TO_SR).map(([code, sr]) => [sr, code])
 );
 
-// materijali koje već imaš u demo API-ju: latex, glass, metal, leather
 const MATERIAL_CODE_TO_SR: Record<string, string> = {
   latex: "lateks",
   glass: "staklo",
@@ -105,18 +103,26 @@ const MATERIAL_SR_TO_CODE: Record<string, string> = Object.fromEntries(
 
 function encodeColorToSr(codeOrSr: string): string {
   const v = normKeyValue(codeOrSr);
-  // ako je već SR
+
+  // već SR?
   if (COLOR_SR_TO_CODE[v]) return v;
-  // ako je code
-  return COLOR_CODE_TO_SR[v] ?? v;
+
+  // alias -> canonical
+  const canon = COLOR_CODE_ALIASES[v] ?? v;
+
+  // code -> SR
+  return COLOR_CODE_TO_SR[canon] ?? canon;
 }
 
 function decodeColorToCode(codeOrSr: string): string {
-  const v = normKeyValue(codeOrSr);
-  // ako je SR -> code
-  if (COLOR_SR_TO_CODE[v]) return COLOR_SR_TO_CODE[v];
-  // ako je već code
-  return v;
+  const v0 = normKeyValue(codeOrSr);
+
+  // SR -> code
+  const mapped = COLOR_SR_TO_CODE[v0];
+  const v = mapped ? mapped : v0;
+
+  // alias -> canonical
+  return COLOR_CODE_ALIASES[v] ?? v;
 }
 
 function encodeMaterialToSr(codeOrSr: string): string {
@@ -132,7 +138,6 @@ function decodeMaterialToCode(codeOrSr: string): string {
 }
 
 function getAllCompat(sp: URLSearchParams, keys: string[]): string[] {
-  // čita i key i key[] formu
   const out: string[] = [];
   for (const k of keys) {
     for (const v of sp.getAll(k)) out.push(v);
@@ -162,13 +167,12 @@ function setArray(sp: URLSearchParams, key: string, values: string[]) {
 }
 
 export function normalizeFilters(f: ListingFilters): ListingFilters {
-  // Stabilizuj query key-eve
   const out: ListingFilters = { ...f };
 
   if (out.brand) out.brand = uniq(out.brand);
   if (out.size) out.size = uniq(out.size);
 
-  // canonical u filterima treba da bude backend CODE:
+  // canonical codes
   if (out.color) out.color = uniq(out.color.map(decodeColorToCode));
   if (out.material) out.material = uniq(out.material.map(decodeMaterialToCode));
 
@@ -179,25 +183,20 @@ export function normalizeFilters(f: ListingFilters): ListingFilters {
 }
 
 function parseFiltersFromSearchParams(sp: URLSearchParams): ListingFilters {
-  // Facets (SR prefer, EN compat)
   const brand = getAllCompat(sp, ["brend", "brand"]);
   const size = getAllCompat(sp, ["velicina", "size"]);
 
-  // boja: URL SR vrednost (crvena/crna) ali prihvatamo i compat (red/black)
   const colorRaw = getAllCompat(sp, ["boja", "color"]);
   const color = colorRaw.map(decodeColorToCode);
 
-  // materijal: URL SR (koza/lateks) ali prihvatamo i compat (leather/latex)
   const materialRaw = getAllCompat(sp, ["materijal", "material"]);
   const material = materialRaw.map(decodeMaterialToCode);
 
-  // Price (SR prefer, EN compat)
   const minRaw = getFirstCompat(sp, ["cena_min", "min"]);
   const maxRaw = getFirstCompat(sp, ["cena_max", "max"]);
   const min = parseNumber(minRaw);
   const max = parseNumber(maxRaw);
 
-  // Sort
   const sortRaw = (getFirstCompat(sp, ["sort"]) ?? "podrazumevano").trim() as SortKey;
   const allowedSort: SortKey[] = [
     "podrazumevano",
@@ -210,16 +209,13 @@ function parseFiltersFromSearchParams(sp: URLSearchParams): ListingFilters {
   ];
   const sort: SortKey = allowedSort.includes(sortRaw) ? sortRaw : "podrazumevano";
 
-  // View (SR prefer, EN compat)
   const viewRaw = (getFirstCompat(sp, ["prikaz", "view"]) ?? "galerija").trim();
   const view: ViewMode = viewRaw === "lista" ? "lista" : "galerija";
 
-  // Pagination (SR prefer, EN compat)
   const pageRaw = getFirstCompat(sp, ["strana", "page"]);
   const pageNum = parseNumber(pageRaw);
   const page = pageNum != null ? Math.max(1, Math.floor(pageNum)) : 1;
 
-  // Per-page (SR prefer, EN compat)
   const perRaw = getFirstCompat(sp, ["po_strani", "per_page", "perPage"]);
   const perNum = parseNumber(perRaw);
   const perPage = perNum != null ? Math.max(1, Math.floor(perNum)) : 24;
@@ -238,29 +234,57 @@ function parseFiltersFromSearchParams(sp: URLSearchParams): ListingFilters {
   });
 }
 
+function getLocationSearchString(): string {
+  const s = window.location.search || "";
+  return s.startsWith("?") ? s.slice(1) : s;
+}
+
+function buildUrl(pathname: string, qs: string): string {
+  const hash = window.location.hash || "";
+  return qs ? `${pathname}?${qs}${hash}` : `${pathname}${hash}`;
+}
+
 export function useUrlFilters() {
-  const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
 
-  // ključ: oslanjamo se na STRING, ne na referencu objekta
-  const spString = searchParams.toString();
+  // ✅ hydration-safe: init iz Next searchParams (isto na SSR i na clientu)
+  const initialSpString = searchParams.toString();
+
+  const [spString, setSpString] = React.useState<string>(initialSpString);
+
+  // kada se ruta promeni (npr. odeš na drugu kategoriju), pokupi trenutni search iz URL-a
+  React.useEffect(() => {
+    setSpString(getLocationSearchString());
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pathname]);
+
+  // Back/Forward: popstate -> pročitaj URL i osveži state
+  React.useEffect(() => {
+    const onPop = () => setSpString(getLocationSearchString());
+    window.addEventListener("popstate", onPop);
+    return () => window.removeEventListener("popstate", onPop);
+  }, []);
 
   const filters = React.useMemo(() => {
     return parseFiltersFromSearchParams(new URLSearchParams(spString));
   }, [spString]);
 
-  const replace = React.useCallback(
+  const push = React.useCallback(
     (next: URLSearchParams) => {
       const qs = next.toString();
-      const url = qs ? `${pathname}?${qs}` : pathname;
-      router.replace(url, { scroll: false });
+      const url = buildUrl(pathname, qs);
+
+      // pushState => Back radi korak-po-korak
+      window.history.pushState({}, "", url);
+
+      // instant UI
+      setSpString(qs);
     },
-    [router, pathname]
+    [pathname]
   );
 
   const resetPage = (sp: URLSearchParams) => {
-    // SR ključ "strana" (EN čistimo)
     sp.delete("page");
     sp.delete("strana");
   };
@@ -274,9 +298,9 @@ export function useUrlFilters() {
       if (p <= 1) sp.delete("strana");
       else sp.set("strana", String(p));
 
-      replace(sp);
+      push(sp);
     },
-    [spString, replace]
+    [spString, push]
   );
 
   const setSort = React.useCallback(
@@ -288,9 +312,9 @@ export function useUrlFilters() {
       else sp.set("sort", s);
 
       resetPage(sp);
-      replace(sp);
+      push(sp);
     },
-    [spString, replace]
+    [spString, push]
   );
 
   const setView = React.useCallback(
@@ -303,9 +327,9 @@ export function useUrlFilters() {
       else sp.set("prikaz", v);
 
       resetPage(sp);
-      replace(sp);
+      push(sp);
     },
-    [spString, replace]
+    [spString, push]
   );
 
   const setPerPage = React.useCallback(
@@ -320,13 +344,13 @@ export function useUrlFilters() {
       else sp.set("po_strani", String(p));
 
       resetPage(sp);
-      replace(sp);
+      push(sp);
     },
-    [spString, replace]
+    [spString, push]
   );
 
   const setPriceDraft = React.useCallback((_min: number | null, _max: number | null) => {
-    // draft je samo za UI (RangeSlider), ne ide u URL
+    // draft je samo UI, ne ide u URL
   }, []);
 
   const setPrice = React.useCallback(
@@ -343,60 +367,50 @@ export function useUrlFilters() {
       else sp.set("cena_max", String(Math.round(max)));
 
       resetPage(sp);
-      replace(sp);
+      push(sp);
     },
-    [spString, replace]
+    [spString, push]
   );
 
   const toggleMulti = React.useCallback(
     (code: "brand" | "size" | "color" | "material", value: string) => {
       const sp = new URLSearchParams(spString);
 
-      const srKey =
-        code === "brand" ? "brend" : code === "size" ? "velicina" : code === "color" ? "boja" : "materijal";
+      const srKey = code === "brand" ? "brend" : code === "size" ? "velicina" : code === "color" ? "boja" : "materijal";
       const enKey = code;
 
-      // EN compat cleanup
       deleteKeys(sp, [enKey]);
 
-      // U URL-u držimo SR vrednosti za boja/materijal, ali canonical set radimo u CODE
       const currentUrlVals = getAllCompat(sp, [srKey]);
 
       let currentCodes: string[] = currentUrlVals;
-
       if (code === "color") currentCodes = currentUrlVals.map(decodeColorToCode);
       if (code === "material") currentCodes = currentUrlVals.map(decodeMaterialToCode);
 
       const set = new Set(currentCodes);
-      const vCode = code === "color" ? decodeColorToCode(value) : code === "material" ? decodeMaterialToCode(value) : value;
+      const vCode =
+        code === "color" ? decodeColorToCode(value) : code === "material" ? decodeMaterialToCode(value) : String(value);
 
       if (set.has(vCode)) set.delete(vCode);
       else set.add(vCode);
 
       const nextCodes = Array.from(set);
 
-      if (code === "color") {
-        const nextUrl = nextCodes.map(encodeColorToSr);
-        setArray(sp, srKey, nextUrl);
-      } else if (code === "material") {
-        const nextUrl = nextCodes.map(encodeMaterialToSr);
-        setArray(sp, srKey, nextUrl);
-      } else {
-        setArray(sp, srKey, nextCodes);
-      }
+      if (code === "color") setArray(sp, srKey, nextCodes.map(encodeColorToSr));
+      else if (code === "material") setArray(sp, srKey, nextCodes.map(encodeMaterialToSr));
+      else setArray(sp, srKey, nextCodes);
 
       resetPage(sp);
-      replace(sp);
+      push(sp);
     },
-    [spString, replace]
+    [spString, push]
   );
 
   const removeMulti = React.useCallback(
     (code: "brand" | "size" | "color" | "material", value: string) => {
       const sp = new URLSearchParams(spString);
 
-      const srKey =
-        code === "brand" ? "brend" : code === "size" ? "velicina" : code === "color" ? "boja" : "materijal";
+      const srKey = code === "brand" ? "brend" : code === "size" ? "velicina" : code === "color" ? "boja" : "materijal";
       const enKey = code;
 
       deleteKeys(sp, [enKey]);
@@ -407,7 +421,9 @@ export function useUrlFilters() {
       if (code === "color") currentCodes = currentUrlVals.map(decodeColorToCode);
       if (code === "material") currentCodes = currentUrlVals.map(decodeMaterialToCode);
 
-      const vCode = code === "color" ? decodeColorToCode(value) : code === "material" ? decodeMaterialToCode(value) : value;
+      const vCode =
+        code === "color" ? decodeColorToCode(value) : code === "material" ? decodeMaterialToCode(value) : String(value);
+
       const nextCodes = currentCodes.filter((x) => x !== vCode);
 
       if (nextCodes.length === 0) {
@@ -419,14 +435,14 @@ export function useUrlFilters() {
       }
 
       resetPage(sp);
-      replace(sp);
+      push(sp);
     },
-    [spString, replace]
+    [spString, push]
   );
 
   const resetAll = React.useCallback(() => {
-    replace(new URLSearchParams());
-  }, [replace]);
+    push(new URLSearchParams());
+  }, [push]);
 
   return {
     filters,

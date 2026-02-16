@@ -102,8 +102,6 @@ export function RangeSlider({
       const highX = (highPct / 100) * (rect.width || 1);
       const dLow = Math.abs(x - lowX);
       const dHigh = Math.abs(x - highX);
-
-      // ako su blizu, bira bliži; ako su jednaki, preferiraj MIN (da levi ne bude “mrtav”)
       return dLow <= dHigh ? ("min" as const) : ("max" as const);
     },
     [lowPct, highPct]
@@ -121,7 +119,6 @@ export function RangeSlider({
       setBoth(low, Math.max(v, low), false);
     }
 
-    // capture za drag
     (e.currentTarget as HTMLDivElement).setPointerCapture(e.pointerId);
   };
 
@@ -170,9 +167,7 @@ export function RangeSlider({
         setActive(null);
       }}
     >
-      {/* rezervisan prostor za tooltip iznad + da ne preklapa ispod */}
       <div className="relative pt-10 pb-6">
-        {/* tooltips — striktno iznad thumbova */}
         {showTooltips && !disabled && (
           <>
             <div
@@ -190,7 +185,6 @@ export function RangeSlider({
           </>
         )}
 
-        {/* track + range + thumbs */}
         <div
           ref={rootRef}
           className={`relative h-10 w-full ${disabled ? "opacity-50" : ""}`}
@@ -199,15 +193,12 @@ export function RangeSlider({
           onPointerUp={onPointerUp}
           onPointerCancel={() => setActive(null)}
         >
-          {/* Track */}
           <div className="absolute left-0 right-0 top-1/2 h-2 -translate-y-1/2 rounded-full bg-black/10" />
-          {/* Active range */}
           <div
             className="absolute top-1/2 h-2 -translate-y-1/2 rounded-full bg-black/70"
             style={{ left: `${lowPct}%`, width: `${Math.max(0, highPct - lowPct)}%` }}
           />
 
-          {/* Thumbs (veliki hit area) */}
           <button
             type="button"
             disabled={disabled}

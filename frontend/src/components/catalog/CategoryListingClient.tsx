@@ -1,17 +1,26 @@
 "use client";
 
 import * as React from "react";
-import { ChevronDown, LayoutGrid, List, X } from "lucide-react";
+import { LayoutGrid, List, X } from "lucide-react";
 
-import { useCategoryProducts, type Facet, type FacetOption } from "@/hooks/useCategoryProducts";
+import { useCategoryProducts, type Facet } from "@/hooks/useCategoryProducts";
 import { useUrlFilters, type SortKey, type ViewMode } from "@/hooks/useUrlFilters";
 import { RangeSlider } from "@/components/ui/RangeSlider";
 import { ProductCardGallery } from "@/components/catalog/ProductCardGallery";
 import { ProductRowList } from "@/components/catalog/ProductRowList";
+import { FacetBlock } from "@/components/catalog/FacetBlock";
+import { MobileFiltersDrawer } from "@/components/catalog/MobileFiltersDrawer";
 
 type Props = { slugPath: string };
 
-const SORT_OPTIONS: Array<{ key: SortKey; label: string; disabled?: boolean }> = [
+const SORT_TABS: Array<{ key: SortKey; label: string; disabled?: boolean }> = [
+  { key: "podrazumevano", label: "Relevantno" },
+  { key: "najnovije", label: "Najnovije" },
+  { key: "cena_gore", label: "Cena ↑" },
+  { key: "cena_dole", label: "Cena ↓" },
+];
+
+const SORT_SELECT_ALL: Array<{ key: SortKey; label: string; disabled?: boolean }> = [
   { key: "podrazumevano", label: "Podrazumevano" },
   { key: "najnovije", label: "Najnovije" },
   { key: "cena_gore", label: "Cena: rastuće" },
@@ -36,8 +45,8 @@ type ChipItem =
 
 function Chip({ label, onRemove }: { label: string; onRemove: () => void }) {
   return (
-    <span className="inline-flex items-center gap-2 rounded-full border bg-white px-3 py-1 text-xs hover:bg-black/5">
-      <span>{label}</span>
+    <span className="mic-pill">
+      <span className="max-w-[220px] truncate">{label}</span>
       <button type="button" className="rounded-full p-0.5 hover:bg-black/10" onClick={onRemove} aria-label="Ukloni">
         <X className="h-3.5 w-3.5" />
       </button>
@@ -45,57 +54,34 @@ function Chip({ label, onRemove }: { label: string; onRemove: () => void }) {
   );
 }
 
-function Collapsible({
-  title,
-  children,
-  defaultOpen = true,
-}: {
-  title: string;
-  children: React.ReactNode;
-  defaultOpen?: boolean;
-}) {
-  const [open, setOpen] = React.useState(defaultOpen);
-
-  return (
-    <div className="rounded-2xl border bg-white">
-      <button
-        type="button"
-        className="flex w-full items-center justify-between px-4 py-3"
-        onClick={() => setOpen((o) => !o)}
-      >
-        <div className="text-sm font-semibold">{title}</div>
-        <ChevronDown className={`h-4 w-4 transition-transform ${open ? "rotate-180" : ""}`} />
-      </button>
-
-      {open ? <div className="px-4 pb-4">{children}</div> : null}
-    </div>
-  );
-}
-
 function ViewToggle({ value, onChange }: { value: ViewMode; onChange: (v: ViewMode) => void }) {
   return (
-    <div className="inline-flex rounded-full border bg-white p-1">
+    <div className="inline-flex rounded-md border bg-white p-1">
       <button
         type="button"
         onClick={() => onChange("galerija")}
-        className={`inline-flex items-center gap-2 rounded-full px-3 py-1.5 text-sm transition ${
-          value === "galerija" ? "bg-black text-white" : "hover:bg-black/5"
-        }`}
+        className={[
+          "inline-flex items-center gap-2 rounded-md px-2.5 py-1.5 text-[12px] transition",
+          value === "galerija" ? "bg-black text-white" : "hover:bg-black/5",
+        ].join(" ")}
         aria-pressed={value === "galerija"}
+        title="Galerija"
       >
         <LayoutGrid className="h-4 w-4" />
-        Galerija
+        Grid
       </button>
       <button
         type="button"
         onClick={() => onChange("lista")}
-        className={`inline-flex items-center gap-2 rounded-full px-3 py-1.5 text-sm transition ${
-          value === "lista" ? "bg-black text-white" : "hover:bg-black/5"
-        }`}
+        className={[
+          "inline-flex items-center gap-2 rounded-md px-2.5 py-1.5 text-[12px] transition",
+          value === "lista" ? "bg-black text-white" : "hover:bg-black/5",
+        ].join(" ")}
         aria-pressed={value === "lista"}
+        title="Lista"
       >
         <List className="h-4 w-4" />
-        Lista
+        List
       </button>
     </div>
   );
@@ -108,6 +94,7 @@ export default function CategoryListingClient({ slugPath }: Props) {
   const q = useCategoryProducts(slugPath, filters);
   const data = q.data;
 
+  // --- price bounds from API ---
   const [bounds, setBounds] = React.useState<{ min: number; max: number } | null>(null);
 
   React.useEffect(() => {
@@ -161,6 +148,16 @@ export default function CategoryListingClient({ slugPath }: Props) {
     (filters.perPage ?? 24) !== 24 ||
     (filters.view ?? "galerija") !== "galerija";
 
+  const activeCount =
+    (filters.brand?.length ?? 0) +
+    (filters.size?.length ?? 0) +
+    (filters.color?.length ?? 0) +
+    (filters.material?.length ?? 0) +
+    (filters.min != null || filters.max != null ? 1 : 0) +
+    ((filters.sort ?? "podrazumevano") !== "podrazumevano" ? 1 : 0) +
+    ((filters.view ?? "galerija") !== "galerija" ? 1 : 0) +
+    ((filters.perPage ?? 24) !== 24 ? 1 : 0);
+
   const chips: ChipItem[] = React.useMemo(() => {
     const out: ChipItem[] = [];
 
@@ -187,8 +184,8 @@ export default function CategoryListingClient({ slugPath }: Props) {
 
     if ((filters.sort ?? "podrazumevano") !== "podrazumevano") {
       const s = filters.sort ?? "podrazumevano";
-      const label = SORT_OPTIONS.find((x) => x.key === s)?.label ?? s;
-      out.push({ kind: "sort", label: `Sortiraj: ${label}` });
+      const label = SORT_SELECT_ALL.find((x) => x.key === s)?.label ?? s;
+      out.push({ kind: "sort", label: `Sort: ${label}` });
     }
 
     if ((filters.view ?? "galerija") !== "galerija") {
@@ -219,91 +216,163 @@ export default function CategoryListingClient({ slugPath }: Props) {
   const total = data?.pagination?.total ?? 0;
   const pageCount = Math.max(1, Math.ceil(total / Math.max(1, perPage)));
 
+  const onToggleFacet = (facetCode: string, value: string) => {
+    toggleMulti(facetCode as any, value);
+  };
+
+  // shared filter content (sidebar + drawer)
+  const FiltersContent = (
+    <div className="flex flex-col gap-3">
+      {/* Price */}
+      <div className="border-b pb-3">
+        <div className="flex items-center justify-between">
+          <div className="text-[13px] font-semibold">Cena</div>
+          <div className="text-[11px] mic-muted">
+            {sliderReady ? `${formatRSD(uiMin)} – ${formatRSD(uiMax)}` : "…"}
+          </div>
+        </div>
+
+        <div className="mt-2">
+          <RangeSlider
+            min={sliderReady ? minAvail : 0}
+            max={sliderReady ? maxAvail : 0}
+            step={10}
+            disabled={!sliderReady}
+            value={[Math.min(uiMin, uiMax), Math.max(uiMin, uiMax)]}
+            onValueChange={(v) => {
+              if (!sliderReady) return;
+              const next: [number, number] = [Math.min(v[0], v[1]), Math.max(v[0], v[1])];
+              setDraftPrice(next);
+              // draft ne gura URL (brže)
+              setPriceDraft(next[0], next[1]);
+            }}
+            onValueCommit={(v) => {
+              if (!sliderReady) return;
+              const next: [number, number] = [Math.min(v[0], v[1]), Math.max(v[0], v[1])];
+              setDraftPrice(null);
+              setPrice(next[0], next[1]);
+            }}
+            format={formatRSD}
+          />
+
+          {!sliderReady ? <div className="mt-2 text-[11px] mic-muted-2">Čekam opseg cene iz API-ja…</div> : null}
+        </div>
+      </div>
+
+      {/* Facets */}
+      <div className="flex flex-col gap-3">
+        {facetSections.map((facet) => {
+          const selectedArr = (filters[facet.code as any] as string[] | undefined) ?? [];
+          const selected = new Set(selectedArr);
+
+          return (
+            <FacetBlock key={facet.code} facet={facet} selected={selected} onToggle={onToggleFacet} defaultVisible={6} />
+          );
+        })}
+      </div>
+    </div>
+  );
+
   return (
-    <div className="mx-auto w-full max-w-6xl px-4 py-6">
-      <div className="grid grid-cols-1 gap-6 lg:grid-cols-[320px_1fr]">
-        <aside className="flex flex-col gap-6">
-          <div className="flex items-center justify-between">
-            <div className="text-base font-semibold">Filteri</div>
-            <button
-              type="button"
-              className="h-9 rounded-full border bg-white px-3 text-sm hover:bg-black/5 disabled:opacity-50"
-              onClick={resetAll}
-              disabled={!canReset}
-            >
-              Reset
-            </button>
+    <div className="mx-auto w-full max-w-6xl px-3 py-4">
+      {/* Header */}
+      <div className="mb-3 flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="text-[11px] mic-muted-2">{slugPath}</div>
+          <h1 className="truncate text-xl font-semibold">{data?.category?.name ?? "Kategorija"}</h1>
+          <div className="mt-1 text-[12px] mic-muted">
+            {total} proizvoda • strana {page}/{pageCount}
+            {q.isFetching ? <span className="ml-2 inline-block h-2 w-2 rounded-full bg-black/30 align-middle animate-pulse" /> : null}
           </div>
+        </div>
 
-          <div className="rounded-2xl border bg-white px-4 py-3">
-            <div className="text-sm font-semibold">Cena</div>
+        <button
+          type="button"
+          className="mic-btn h-9 px-3 text-[12px] disabled:opacity-50"
+          onClick={resetAll}
+          disabled={!canReset}
+          title="Reset filtera"
+        >
+          Reset
+        </button>
+      </div>
 
-            <div className="mt-3">
-              <RangeSlider
-                min={sliderReady ? minAvail : 0}
-                max={sliderReady ? maxAvail : 0}
-                step={10}
-                disabled={!sliderReady}
-                value={[Math.min(uiMin, uiMax), Math.max(uiMin, uiMax)]}
-                onValueChange={(v) => {
-                  if (!sliderReady) return;
-                  const next: [number, number] = [Math.min(v[0], v[1]), Math.max(v[0], v[1])];
-                  setDraftPrice(next);
-                  setPriceDraft(next[0], next[1]);
-                }}
-                onValueCommit={(v) => {
-                  if (!sliderReady) return;
-                  const next: [number, number] = [Math.min(v[0], v[1]), Math.max(v[0], v[1])];
-                  setDraftPrice(null);
-                  setPrice(next[0], next[1]);
-                }}
-                format={formatRSD}
-              />
+{/* Mobile bottom bar (controls + chips) */}
+<div className="mic-bottombar lg:hidden">
+  <div className="mx-auto w-full max-w-6xl px-3 py-2">
+    <div className="flex items-center justify-between gap-2">
+      <MobileFiltersDrawer
+        activeCount={activeCount}
+        subtitle={
+          <span>
+            {total} proizvoda • {q.isFetching ? "osvežavam…" : "spremno"}
+          </span>
+        }
+      >
+        {FiltersContent}
+      </MobileFiltersDrawer>
 
-              {!sliderReady ? <div className="mt-2 text-xs text-black/50">Čekam opseg cene iz API-ja…</div> : null}
-            </div>
+      <div className="flex items-center gap-2">
+        <ViewToggle value={view} onChange={setView} />
+        <select
+          className="mic-select"
+          value={filters.sort ?? "podrazumevano"}
+          onChange={(e) => setSort(e.target.value as SortKey)}
+          title="Sort"
+        >
+          {SORT_SELECT_ALL.map((opt) => (
+            <option key={opt.key} value={opt.key} disabled={opt.disabled}>
+              {opt.label}
+            </option>
+          ))}
+        </select>
+      </div>
+    </div>
+
+    <div className="mt-2 flex items-center justify-between gap-2">
+      <div className="text-[12px] mic-muted">Po strani</div>
+      <select className="mic-select" value={perPage} onChange={(e) => setPerPage(Number(e.target.value))}>
+        {PER_PAGE_OPTIONS.map((n) => (
+          <option key={n} value={n}>
+            {n}
+          </option>
+        ))}
+      </select>
+    </div>
+
+    {/* chips (mobile) */}
+    <div className="mt-2 flex gap-2 overflow-x-auto pb-1">
+{chips.length ? (
+  <div className="mt-2 flex gap-2 overflow-x-auto pb-1">
+    {chips.map((c) => (
+      <Chip
+        key={`${c.kind}:${"code" in c ? c.code : ""}:${"value" in c ? c.value : ""}:${c.label}`}
+        label={c.label}
+        onRemove={() => removeChip(c)}
+      />
+    ))}
+  </div>
+) : null}
+    </div>
+  </div>
+</div>
+
+{/* Spacer da bottom bar ne prekriva sadržaj (samo mobile) */}
+<div className="h-[96px] lg:hidden" />
+
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-[280px_1fr]">
+        {/* Sidebar (desktop) */}
+        <aside className="hidden lg:block lg:sticky lg:top-3 lg:h-[calc(100vh-24px)] lg:overflow-auto">
+          <div className="mic-card p-3">
+            <div className="text-[13px] font-semibold">Filteri</div>
+            <div className="mt-3">{FiltersContent}</div>
           </div>
-
-          {facetSections.map((facet) => {
-            const selectedArr = (filters[facet.code as any] as string[] | undefined) ?? [];
-            const selected = new Set(selectedArr);
-
-            return (
-              <Collapsible key={facet.code} title={facet.label} defaultOpen={true}>
-                <div className="flex flex-col gap-2">
-                  {facet.options.map((opt: FacetOption) => {
-                    const disabled = (opt.count ?? 0) <= 0;
-                    const checked = selected.has(opt.value);
-
-                    return (
-                      <label
-                        key={`${facet.code}:${opt.value}`}
-                        className={`flex items-center justify-between gap-3 rounded-xl px-2 py-1.5 text-sm ${
-                          disabled ? "cursor-not-allowed opacity-40" : "cursor-pointer hover:bg-black/5"
-                        }`}
-                      >
-                        <span className="flex items-center gap-2">
-                          <input
-                            type="checkbox"
-                            className="h-4 w-4"
-                            checked={checked}
-                            disabled={disabled}
-                            onChange={() => toggleMulti(facet.code as any, opt.value)}
-                          />
-                          <span>{opt.label ?? opt.value}</span>
-                        </span>
-                        <span className="text-xs text-black/50">{opt.count}</span>
-                      </label>
-                    );
-                  })}
-                </div>
-              </Collapsible>
-            );
-          })}
         </aside>
 
-        <main className="flex flex-col gap-4">
-          <div className="flex flex-wrap items-center gap-2">
+        {/* Main */}
+        <main className="flex flex-col gap-3">
+          {/* Active chips (desktop) */}
+          <div className="hidden lg:flex flex-wrap items-center gap-2">
             {chips.length ? (
               chips.map((c) => (
                 <Chip
@@ -313,27 +382,57 @@ export default function CategoryListingClient({ slugPath }: Props) {
                 />
               ))
             ) : (
-              <div className="text-sm text-black/60">Nema aktivnih filtera.</div>
+              <div className="text-[12px] mic-muted">Nema aktivnih filtera.</div>
             )}
           </div>
 
-          <div className="rounded-2xl border bg-white p-4">
-            <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-              <div className="flex items-center gap-2 text-sm text-black/60">
-                <span>Ukupno: {total} proizvoda</span>
-                {q.isFetching ? <span className="h-2 w-2 rounded-full bg-black/30 animate-pulse" /> : null}
+          {/* Sort/controls bar (desktop) */}
+          <div className="mic-card p-3 hidden lg:block">
+            <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+              <div className="flex flex-wrap items-center gap-2">
+                <div className="text-[12px] font-semibold text-black/70">Sort:</div>
+
+                <div className="flex flex-wrap gap-1.5">
+                  {SORT_TABS.map((t) => {
+                    const active = (filters.sort ?? "podrazumevano") === t.key;
+                    return (
+                      <button
+                        key={t.key}
+                        type="button"
+                        disabled={t.disabled}
+                        onClick={() => setSort(t.key)}
+                        className={[
+                          "h-8 rounded-md border px-2.5 text-[12px] transition",
+                          active ? "bg-black text-white border-black" : "bg-white hover:bg-black/5",
+                          t.disabled ? "opacity-50 cursor-not-allowed" : "",
+                        ].join(" ")}
+                      >
+                        {t.label}
+                      </button>
+                    );
+                  })}
+                </div>
+
+                <select
+                  className="mic-select ml-1"
+                  value={filters.sort ?? "podrazumevano"}
+                  onChange={(e) => setSort(e.target.value as SortKey)}
+                  title="Detaljnije sortiranje"
+                >
+                  {SORT_SELECT_ALL.map((opt) => (
+                    <option key={opt.key} value={opt.key} disabled={opt.disabled}>
+                      {opt.label}
+                    </option>
+                  ))}
+                </select>
               </div>
 
-              <div className="flex flex-wrap items-center gap-3">
+              <div className="flex flex-wrap items-center gap-2">
                 <ViewToggle value={view} onChange={setView} />
 
                 <div className="flex items-center gap-2">
-                  <div className="text-sm font-semibold">Po strani</div>
-                  <select
-                    className="h-9 rounded-full border bg-white px-3 text-sm"
-                    value={perPage}
-                    onChange={(e) => setPerPage(Number(e.target.value))}
-                  >
+                  <div className="text-[12px] font-semibold text-black/70">Po strani</div>
+                  <select className="mic-select" value={perPage} onChange={(e) => setPerPage(Number(e.target.value))}>
                     {PER_PAGE_OPTIONS.map((n) => (
                       <option key={n} value={n}>
                         {n}
@@ -341,69 +440,56 @@ export default function CategoryListingClient({ slugPath }: Props) {
                     ))}
                   </select>
                 </div>
-
-                <div className="flex items-center gap-2">
-                  <div className="text-sm font-semibold">Sortiraj</div>
-                  <select
-                    className="h-9 rounded-full border bg-white px-3 text-sm"
-                    value={filters.sort ?? "podrazumevano"}
-                    onChange={(e) => setSort(e.target.value as SortKey)}
-                  >
-                    {SORT_OPTIONS.map((opt) => (
-                      <option key={opt.key} value={opt.key} disabled={opt.disabled}>
-                        {opt.label}
-                      </option>
-                    ))}
-                  </select>
-                </div>
               </div>
             </div>
 
-            <div className="my-4 h-px w-full bg-black/10" />
-
             {q.error ? (
-              <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm">Greška: {(q.error as Error).message}</div>
+              <div className="mt-3 rounded-md border border-red-200 bg-red-50 p-3 text-[12px]">
+                Greška: {(q.error as Error).message}
+              </div>
+            ) : null}
+          </div>
+
+          {/* Results */}
+          <div className="mic-card p-3">
+            {view === "galerija" ? (
+              <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-4">
+                {(data?.products ?? []).map((p) => (
+                  <ProductCardGallery key={p.id} slugPath={slugPath} p={p} />
+                ))}
+              </div>
             ) : (
-              <>
-                {view === "galerija" ? (
-                  <div className="grid grid-cols-2 gap-4 md:grid-cols-3 xl:grid-cols-4">
-                    {(data?.products ?? []).map((p) => (
-                      <ProductCardGallery key={p.id} slugPath={slugPath} p={p} />
-                    ))}
-                  </div>
-                ) : (
-                  <div className="flex flex-col gap-3">
-                    {(data?.products ?? []).map((p) => (
-                      <ProductRowList key={p.id} slugPath={slugPath} p={p} />
-                    ))}
-                  </div>
-                )}
-
-                <div className="mt-6 flex items-center justify-center gap-2">
-                  <button
-                    type="button"
-                    className="h-9 rounded-full border bg-white px-3 text-sm hover:bg-black/5 disabled:opacity-50"
-                    disabled={page <= 1}
-                    onClick={() => setPage(page - 1)}
-                  >
-                    Prethodna
-                  </button>
-
-                  <div className="text-sm text-black/60">
-                    Strana {page} / {pageCount}
-                  </div>
-
-                  <button
-                    type="button"
-                    className="h-9 rounded-full border bg-white px-3 text-sm hover:bg-black/5 disabled:opacity-50"
-                    disabled={page >= pageCount}
-                    onClick={() => setPage(page + 1)}
-                  >
-                    Sledeća
-                  </button>
-                </div>
-              </>
+              <div className="flex flex-col gap-2">
+                {(data?.products ?? []).map((p) => (
+                  <ProductRowList key={p.id} slugPath={slugPath} p={p} />
+                ))}
+              </div>
             )}
+
+            {/* Pagination */}
+            <div className="mt-4 flex items-center justify-between gap-2">
+              <button
+                type="button"
+                className="mic-btn h-9 px-3 text-[12px] disabled:opacity-50"
+                disabled={page <= 1}
+                onClick={() => setPage(page - 1)}
+              >
+                Prethodna
+              </button>
+
+              <div className="text-[12px] mic-muted">
+                Strana {page} / {pageCount}
+              </div>
+
+              <button
+                type="button"
+                className="mic-btn h-9 px-3 text-[12px] disabled:opacity-50"
+                disabled={page >= pageCount}
+                onClick={() => setPage(page + 1)}
+              >
+                Sledeća
+              </button>
+            </div>
           </div>
         </main>
       </div>

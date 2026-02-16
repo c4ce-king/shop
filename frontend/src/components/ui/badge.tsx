@@ -2,20 +2,37 @@
 
 import * as React from "react";
 
-function cx(...classes: Array<string | undefined | false | null>) {
-  return classes.filter(Boolean).join(" ");
-}
+type Variant = "neutral" | "hot" | "new" | "sale" | "b2b";
 
-type BadgeProps = React.HTMLAttributes<HTMLSpanElement> & {
-  variant?: "default" | "outline";
+const VARIANT_CLASS: Record<Variant, string> = {
+  neutral: "bg-black/5 text-black/70 border-black/10",
+  hot: "bg-orange-50 text-orange-700 border-orange-200",
+  new: "bg-blue-50 text-blue-700 border-blue-200",
+  sale: "bg-red-50 text-red-700 border-red-200",
+  b2b: "bg-emerald-50 text-emerald-700 border-emerald-200",
 };
 
-export function Badge({ className, variant = "default", ...props }: BadgeProps) {
-  const base = "inline-flex items-center rounded-full px-2.5 py-1 text-xs font-medium";
-  const variants: Record<NonNullable<BadgeProps["variant"]>, string> = {
-    default: "bg-black/5 text-black",
-    outline: "border border-black/15 text-black",
-  };
-
-  return <span className={cx(base, variants[variant], className)} {...props} />;
+export function Badge({
+  children,
+  variant = "neutral",
+  className = "",
+  title,
+}: {
+  children: React.ReactNode;
+  variant?: Variant;
+  className?: string;
+  title?: string;
+}) {
+  return (
+    <span
+      title={title}
+      className={[
+        "inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] leading-4 font-medium",
+        VARIANT_CLASS[variant],
+        className,
+      ].join(" ")}
+    >
+      {children}
+    </span>
+  );
 }

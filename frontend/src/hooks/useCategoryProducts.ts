@@ -36,10 +36,7 @@ export type ProductListingItem = {
   slug: string;
   price_rsd: number;
 
-  // i dalje podrži staru logiku (single image)
   image_grid_url?: string | null;
-
-  // NEW: backend šalje mini galeriju kao objekte
   images?: ProductImageDTO[]; // normalized
 };
 
@@ -51,22 +48,42 @@ export type CategoryListingResponse = {
   pagination: { page: number; per_page: number; total: number };
 };
 
-function toBackendParams(filters: ListingFilters): URLSearchParams {
+// ✅ Stabilizuj redosled multi vrednosti -> stabilan URL i stabilan cache key
+function stableArray(xs: unknown): string[] {
+  const arr = Array.isArray(xs) ? xs : [];
+  return arr
+    .map((x) => String(x))
+    .filter((s) => s.trim() !== "")
+    .sort((a, b) => a.localeCompare(b));
+}
+
+function stableFilters(filters: ListingFilters): ListingFilters {
   const f = normalizeFilters(filters);
+
+  return {
+    ...f,
+    brand: stableArray((f as any).brand),
+    size: stableArray((f as any).size),
+    color: stableArray((f as any).color),
+    material: stableArray((f as any).material),
+  } as ListingFilters;
+}
+
+function toBackendParams(filters: ListingFilters): URLSearchParams {
+  const f = stableFilters(filters);
   const sp = new URLSearchParams();
 
-  for (const v of f.brand ?? []) sp.append("brand", v);
-  for (const v of f.size ?? []) sp.append("size", v);
-  for (const v of f.color ?? []) sp.append("color", v);
-  for (const v of f.material ?? []) sp.append("material", v);
+  for (const v of (f as any).brand ?? []) sp.append("brand", v);
+  for (const v of (f as any).size ?? []) sp.append("size", v);
+  for (const v of (f as any).color ?? []) sp.append("color", v);
+  for (const v of (f as any).material ?? []) sp.append("material", v);
 
-  if (f.min != null) sp.set("min", String(Math.round(f.min)));
-  if (f.max != null) sp.set("max", String(Math.round(f.max)));
+  if ((f as any).min != null) sp.set("min", String(Math.round((f as any).min)));
+  if ((f as any).max != null) sp.set("max", String(Math.round((f as any).max)));
 
-  if (f.sort && f.sort !== "podrazumevano") sp.set("sort", f.sort);
-  if (f.page && f.page > 1) sp.set("page", String(f.page));
-
-  if (f.perPage && f.perPage !== 24) sp.set("per_page", String(f.perPage));
+  if ((f as any).sort && (f as any).sort !== "podrazumevano") sp.set("sort", (f as any).sort);
+  if ((f as any).page && (f as any).page > 1) sp.set("page", String((f as any).page));
+  if ((f as any).perPage && (f as any).perPage !== 24) sp.set("per_page", String((f as any).perPage));
 
   return sp;
 }
@@ -78,6 +95,7 @@ export function categoryProductsUrl(slugPath: string, filters: ListingFilters) {
 }
 
 export function categoryProductsQueryKey(slugPath: string, filters: ListingFilters) {
+  // ✅ key baziran na stabilnom URL-u
   const url = categoryProductsUrl(slugPath, filters);
   return ["catProducts", slugPath, url] as const;
 }
@@ -122,21 +140,13 @@ function normalizeResponseFacets(res: CategoryListingResponse): CategoryListingR
   return { ...res, facets: Array.from(by.values()) };
 }
 
-/**
- * Normalizuje products[].images tako da FE uvek dobije ProductImageDTO[].
- * Podržava:
- *  - NEW: images: [{ original, thumb, grid, pdp, ... }]
- *  - OLD: images: ["url1", "url2", ...]
- */
 function normalizeProductImages(res: CategoryListingResponse): CategoryListingResponse {
   const products = Array.isArray(res.products) ? res.products : [];
 
   const normalizedProducts = products.map((p) => {
     const raw = (p as any).images;
-
     let images: ProductImageDTO[] | undefined;
 
-    // NEW shape: array of objects
     if (Array.isArray(raw) && raw.length > 0 && typeof raw[0] === "object" && raw[0] !== null) {
       images = raw.map((x: any, idx: number): ProductImageDTO => {
         const original = typeof x?.original === "string" ? x.original : null;
@@ -155,11 +165,9 @@ function normalizeProductImages(res: CategoryListingResponse): CategoryListingRe
         };
       });
 
-      // sort (just in case)
       images.sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0));
     }
 
-    // OLD shape: array of strings (urls)
     if (!images && Array.isArray(raw) && raw.length > 0 && typeof raw[0] === "string") {
       const urls = raw.filter((u: any) => typeof u === "string" && u.trim() !== "") as string[];
       images = urls.slice(0, 5).map((u, idx) => ({
@@ -173,7 +181,6 @@ function normalizeProductImages(res: CategoryListingResponse): CategoryListingRe
       }));
     }
 
-    // Fallback: ako nema images, probaj image_grid_url kao single
     if ((!images || images.length === 0) && p.image_grid_url) {
       const u = p.image_grid_url;
       images = [
@@ -189,45 +196,37 @@ function normalizeProductImages(res: CategoryListingResponse): CategoryListingRe
       ];
     }
 
-    // Derive image_grid_url ako nije došao (korisno za stare komponente)
     let image_grid_url = p.image_grid_url ?? null;
     if (!image_grid_url && images && images.length > 0) {
       image_grid_url = images[0].grid ?? images[0].thumb ?? images[0].original ?? null;
     }
 
-    return {
-      ...p,
-      image_grid_url,
-      images,
-    } as ProductListingItem;
+    return { ...p, image_grid_url, images } as ProductListingItem;
   });
 
   return { ...res, products: normalizedProducts };
 }
 
 function normalizeResponse(res: CategoryListingResponse): CategoryListingResponse {
-  // 1) facets code normalization (brend->brand, itd.)
-  const withFacets = normalizeResponseFacets(res);
-  // 2) images normalization (objects + backward compat)
-  return normalizeProductImages(withFacets);
+  return normalizeProductImages(normalizeResponseFacets(res));
 }
 
 export function useCategoryProducts(slugPath: string, filters: ListingFilters) {
-  const f = normalizeFilters(filters);
+  const f = stableFilters(filters);
 
   return useQuery({
     queryKey: categoryProductsQueryKey(slugPath, f),
     queryFn: ({ signal }) => fetchCategoryProducts(slugPath, f, signal),
     enabled: !!slugPath,
 
-    // Jedan select koji normalizuje facets + images shape
     select: normalizeResponse,
 
     staleTime: 60_000,
     gcTime: 10 * 60_000,
-    placeholderData: (prev) => prev,
     refetchOnWindowFocus: false,
-
     retry: 0,
+
+    // ✅ NAJBITNIJE: nema "blink" na promenu filtera
+    placeholderData: (prev) => prev,
   });
 }
