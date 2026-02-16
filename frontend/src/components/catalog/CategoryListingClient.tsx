@@ -102,18 +102,8 @@ function ViewToggle({ value, onChange }: { value: ViewMode; onChange: (v: ViewMo
 }
 
 export default function CategoryListingClient({ slugPath }: Props) {
-  const {
-    filters,
-    toggleMulti,
-    removeMulti,
-    setPriceDraft,
-    setPrice,
-    setSort,
-    setPage,
-    setPerPage,
-    setView,
-    resetAll,
-  } = useUrlFilters();
+  const { filters, toggleMulti, removeMulti, setPriceDraft, setPrice, setSort, setPage, setPerPage, setView, resetAll } =
+    useUrlFilters();
 
   const q = useCategoryProducts(slugPath, filters);
   const data = q.data;
@@ -151,7 +141,7 @@ export default function CategoryListingClient({ slugPath }: Props) {
 
   React.useEffect(() => {
     setDraftPrice(null);
-  }, [filters.min, filters.max, slugPath]);
+  }, [filters.min, filters.max, filters.page, filters.perPage, filters.sort, filters.view, slugPath]);
 
   const uiMin = draftPrice?.[0] ?? committedMin;
   const uiMax = draftPrice?.[1] ?? committedMax;
@@ -178,8 +168,7 @@ export default function CategoryListingClient({ slugPath }: Props) {
       const facet = facetByCode.get(code);
       for (const v of values ?? []) {
         const optLabel = facet?.options.find((o) => o.value === v)?.label ?? v;
-        const prefix =
-          code === "brand" ? "Brend" : code === "size" ? "Veličina" : code === "color" ? "Boja" : "Materijal";
+        const prefix = code === "brand" ? "Brend" : code === "size" ? "Veličina" : code === "color" ? "Boja" : "Materijal";
         out.push({ kind: "facet", code, value: v, label: `${prefix}: ${optLabel}` });
       }
     };
@@ -199,7 +188,7 @@ export default function CategoryListingClient({ slugPath }: Props) {
     if ((filters.sort ?? "podrazumevano") !== "podrazumevano") {
       const s = filters.sort ?? "podrazumevano";
       const label = SORT_OPTIONS.find((x) => x.key === s)?.label ?? s;
-      out.push({ kind: "sort", label: `Sort: ${label}` });
+      out.push({ kind: "sort", label: `Sortiraj: ${label}` });
     }
 
     if ((filters.view ?? "galerija") !== "galerija") {
@@ -274,8 +263,6 @@ export default function CategoryListingClient({ slugPath }: Props) {
               {!sliderReady ? <div className="mt-2 text-xs text-black/50">Čekam opseg cene iz API-ja…</div> : null}
             </div>
           </div>
-
-          <div className="h-10" />
 
           {facetSections.map((facet) => {
             const selectedArr = (filters[facet.code as any] as string[] | undefined) ?? [];
@@ -356,7 +343,7 @@ export default function CategoryListingClient({ slugPath }: Props) {
                 </div>
 
                 <div className="flex items-center gap-2">
-                  <div className="text-sm font-semibold">Sort</div>
+                  <div className="text-sm font-semibold">Sortiraj</div>
                   <select
                     className="h-9 rounded-full border bg-white px-3 text-sm"
                     value={filters.sort ?? "podrazumevano"}
@@ -375,9 +362,7 @@ export default function CategoryListingClient({ slugPath }: Props) {
             <div className="my-4 h-px w-full bg-black/10" />
 
             {q.error ? (
-              <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm">
-                Greška: {(q.error as Error).message}
-              </div>
+              <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm">Greška: {(q.error as Error).message}</div>
             ) : (
               <>
                 {view === "galerija" ? (

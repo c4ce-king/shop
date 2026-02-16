@@ -1,26 +1,22 @@
+import type { Metadata } from "next";
 import CategoryListingClient from "@/components/catalog/CategoryListingClient";
+import ProductPageClient from "@/components/product/ProductPageClient";
 
-import { QueryClient, dehydrate, HydrationBoundary } from "@tanstack/react-query";
+type Props = { params: Promise<{ slug?: string[] }> };
 
-type Props = {
-  params: Promise<{ slug?: string[] }>;
-};
+type ResolveResponse =
+  | { type: "home" }
+  | { type: "category"; slug_path: string; category_id: number }
+  | { type: "product"; slug: string }
+  | { type: "not_found" };
 
-function categoryProductsUrl(slugPath: string) {
-  return `/api/category/${slugPath}/products`;
-}
-
-function categoryProductsQueryKey(slugPath: string) {
-  const url = categoryProductsUrl(slugPath);
-  return ["catProducts", slugPath, url] as const;
-}
-
-async function fetchCategoryProductsServer(slugPath: string) {
+async function apiFetchJson(path: string) {
   const base = process.env.BACKEND_URL;
   if (!base) throw new Error("BACKEND_URL missing in .env.local");
 
-  const res = await fetch(`${base}${categoryProductsUrl(slugPath)}`, {
-    next: { revalidate: 30 },
+  const res = await fetch(`${base}${path}`, {
+    // metadata treba da bude “fresh enough”
+    cache: "no-store",
     headers: { Accept: "application/json" },
   });
 
@@ -28,24 +24,78 @@ async function fetchCategoryProductsServer(slugPath: string) {
   return res.json();
 }
 
-export default async function CatchAllPage({ params }: Props) {
+async function resolvePath(slugPath: string): Promise<ResolveResponse | null> {
+  const q = encodeURIComponent(slugPath);
+  return apiFetchJson(`/api/resolve?path=${q}`);
+}
+
+async function fetchCategoryName(slugPath: string): Promise<string | null> {
+  // categoryProducts vraća category.name
+  const data = await apiFetchJson(`/api/category/${slugPath}/products?per_page=1`);
+  const name = data?.category?.name;
+  return typeof name === "string" && name.trim() ? name.trim() : null;
+}
+
+async function fetchProductName(productSlug: string): Promise<string | null> {
+  const data = await apiFetchJson(`/api/product/${productSlug}`);
+  const name = data?.name ?? data?.title;
+  return typeof name === "string" && name.trim() ? name.trim() : null;
+}
+
+export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const { slug } = await params;
-  const slugPath = (slug ?? []).join("/");
+  const parts = slug ?? [];
+  const slugPath = parts.join("/");
 
-  const qc = new QueryClient();
-  const isProd = process.env.NODE_ENV === "production";
+  if (!slugPath) return { title: "Shop" };
 
-  // ✅ samo u prod, da dev ne “visi”
-  if (isProd && slugPath) {
-    const data = await fetchCategoryProductsServer(slugPath);
-    if (data) {
-      qc.setQueryData(categoryProductsQueryKey(slugPath), data);
-    }
+  // probaj resolve (ako je implementiran)
+  const r = await resolvePath(slugPath);
+
+  // Ako je category:
+  if (r?.type === "category") {
+    const catName = await fetchCategoryName(r.slug_path);
+    return { title: catName ? `${catName} | Shop` : `Shop` };
   }
 
-  return (
-    <HydrationBoundary state={dehydrate(qc)}>
-      <CategoryListingClient slugPath={slugPath} />
-    </HydrationBoundary>
-  );
+  // Ako je product:
+  // (čak i ako resolve ne zna product, fallback heuristika: poslednji segment je product slug)
+  const productSlug = parts.at(-1) ?? slugPath;
+  const catPath = parts.slice(0, -1).join("/");
+
+  const productName = await fetchProductName(productSlug);
+  const catName = catPath ? await fetchCategoryName(catPath) : null;
+
+  if (productName && catName) return { title: `${catName} — ${productName} | Shop` };
+  if (productName) return { title: `${productName} | Shop` };
+  if (catName) return { title: `${catName} | Shop` };
+
+  return { title: "Shop" };
+}
+
+export default async function CatchAllPage({ params }: Props) {
+  const { slug } = await params;
+  const parts = slug ?? [];
+  const slugPath = parts.join("/");
+
+  // home
+  if (!slugPath) return <CategoryListingClient slugPath="" />;
+
+  // resolve (optional)
+  const r = await resolvePath(slugPath);
+
+  // category
+  if (r?.type === "category") {
+    return <CategoryListingClient slugPath={r.slug_path} />;
+  }
+
+  // product (fallback heuristika)
+  const productSlug = parts.at(-1) ?? slugPath;
+
+  // cat listing ako ima samo 1 segment? (po želji)
+  if (parts.length <= 1) {
+    return <CategoryListingClient slugPath={slugPath} />;
+  }
+
+  return <ProductPageClient slug={productSlug} />;
 }

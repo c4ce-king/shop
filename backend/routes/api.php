@@ -9,7 +9,7 @@ use App\Http\Controllers\CatalogController;
 use App\Http\Controllers\Admin\ProductAdminController;
 use App\Http\Controllers\Admin\ProductImageAdminController;
 
-Route::get('/ping', fn () => response()->json(['ok' => true]));
+Route::get('/ping', fn () => response()->json(['ok' => true, 'app' => 'shop-backend']));
 
 // Search autocomplete sugestije
 Route::get('/pretraga/sugestije', [ShopApiController::class, 'sugestije']);
@@ -17,14 +17,13 @@ Route::get('/pretraga/sugestije', [ShopApiController::class, 'sugestije']);
 // Kategorije tree (za mega meni)
 Route::get('/categories/tree', [CatalogController::class, 'categoriesTree']);
 
-// Resolve path -> (kasnije) category/product
+// Resolve path -> category/product/home
 Route::get('/resolve', [CatalogController::class, 'resolve']);
 
-// Category listing products (SEO slug path može biti dubok: parent/child/child)
-// Primer: /api/category/vibratori/wand/mini-wand/products?size=xl&min=1000&sort=cena_dole
-//Route::get('/category/{slug_path}/products', [CatalogController::class, 'categoryProducts'])
- //   ->where('slug_path', '.*');
+// Product endpoint (MVP za PDP)
+Route::get('/product/{slug}', [CatalogController::class, 'productBySlug']);
 
+// Category listing products (SEO slug path može biti dubok: parent/child/child)
 Route::get('category/{slug_path}/products', [CatalogController::class, 'categoryProducts'])
     ->where('slug_path', '.*');
 
@@ -43,9 +42,7 @@ Route::middleware('admin.token')->prefix('admin')->group(function () {
     Route::delete('/slike/{slikaId}', [ProductImageAdminController::class, 'obrisi']);
 });
 
-
 // -------------------- DEBUG (opciono) --------------------
-// Ostavi ako ti treba za testiranje raw/json payload-ova u devu.
 Route::post('/debug', function (Request $request) {
     return response()->json([
         'content_type' => $request->header('content-type'),

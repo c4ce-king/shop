@@ -5,110 +5,158 @@ namespace App\Support;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Storage;
 
-class ProductImageProcessor
+final class ProductImageProcessor
 {
+    public static int $thumbWidth = 160;
+    public static int $gridWidth  = 360;
+    public static int $pdpWidth   = 900;
+
     /**
-     * MIC-style varijante:
-     * - thumb: 120x120 (crop)
-     * - grid:  480x480 (crop)
-     * - pdp:   900x900 (crop)
-     * - zoom:  1600x1600 (crop)
+     * Snima original + pravi webp varijante (thumb/grid/pdp) na disk('public').
+     * Vraća relativne putanje (bez /storage prefiksa).
      *
-     * Sve WEBP, kvalitet 78-82 (balans: oštro + lagano).
-     *
-     * PLUS: čuvamo original (source) za regeneraciju.
+     * @return array{
+     *   original_rel: string,
+     *   thumb_rel: string,
+     *   grid_rel: string,
+     *   pdp_rel: string,
+     *   width: ?int,
+     *   height: ?int
+     * }
      */
-    public static function makeWebpVariants(UploadedFile $file, int $productId, int $sortOrder = 0): array
+    public static function storeAndGenerate(int $productId, UploadedFile $file, string $baseNameNoExt): array
     {
-        // Public disk (storage:link)
-        $baseDir = "products/{$productId}";
-        $origDir = "{$baseDir}/originals";
+        $disk = Storage::disk('public');
 
-        $origExt = strtolower($file->getClientOriginalExtension() ?: 'jpg');
-        $origMime = $file->getClientMimeType() ?: null;
-        $origSize = $file->getSize() ?: null;
+        $folderRel = "uploads/proizvodi/{$productId}";
+        $disk->makeDirectory($folderRel);
 
-        $basename = "img_" . date('Ymd_His') . "_" . substr(sha1($file->getClientOriginalName() . microtime(true)), 0, 10);
-
-        // 1) Save original (source-of-truth)
-        $originalPath = "{$origDir}/{$basename}.{$origExt}";
-        Storage::disk('public')->putFileAs($origDir, $file, "{$basename}.{$origExt}");
-
-        $originalUrl = Storage::url($originalPath);
-
-        // 2) WEBP variants
-        $thumb = "{$baseDir}/{$basename}_thumb.webp";
-        $grid  = "{$baseDir}/{$basename}_grid.webp";
-        $pdp   = "{$baseDir}/{$basename}_pdp.webp";
-        $zoom  = "{$baseDir}/{$basename}_zoom.webp";
-
-        // Prefer Intervention Image if installed
-        if (class_exists(\Intervention\Image\Facades\Image::class)) {
-            $img = \Intervention\Image\Facades\Image::make($file->getPathname());
-
-            // base meta (ne moramo original dimenzije, ali može pomoći)
-            $img->orientate();
-            $origW = method_exists($img, 'width') ? $img->width() : null;
-            $origH = method_exists($img, 'height') ? $img->height() : null;
-
-            self::encodeSet(\Intervention\Image\Facades\Image::make($file->getPathname()), $thumb, 120, 120, 78);
-            self::encodeSet(\Intervention\Image\Facades\Image::make($file->getPathname()), $grid, 480, 480, 78);
-            self::encodeSet(\Intervention\Image\Facades\Image::make($file->getPathname()), $pdp, 900, 900, 80);
-            self::encodeSet(\Intervention\Image\Facades\Image::make($file->getPathname()), $zoom, 1600, 1600, 82);
-
-            return [
-                // ✅ ORIGINAL
-                'original_path' => $originalPath,
-                'original_url' => $originalUrl,
-                'original_ext' => $origExt,
-                'original_mime' => $origMime,
-                'original_size_bytes' => $origSize,
-                'width' => $origW,
-                'height' => $origH,
-
-                // ✅ WEBP variants
-                'thumb_url_webp' => Storage::url($thumb),
-                'grid_url_webp'  => Storage::url($grid),
-                'pdp_url_webp'   => Storage::url($pdp),
-                'zoom_url_webp'  => Storage::url($zoom),
-
-                'sort_order' => $sortOrder,
-            ];
+        // original (čuvamo kako je uploadovan)
+        $ext = strtolower($file->getClientOriginalExtension() ?: $file->extension() ?: 'jpg');
+        if (!in_array($ext, ['jpg', 'jpeg', 'png', 'webp'], true)) {
+            $ext = 'jpg';
         }
 
-        // No Intervention -> still return original data (we at least stored it)
+        $originalRel = "{$folderRel}/{$baseNameNoExt}.{$ext}";
+        $disk->putFileAs($folderRel, $file, "{$baseNameNoExt}.{$ext}");
+
+        $originalAbs = $disk->path($originalRel);
+
+        [$w, $h] = self::getImageSize($originalAbs);
+
+        // webp varijante
+        $thumbRel = "{$folderRel}/{$baseNameNoExt}__thumb.webp";
+        $gridRel  = "{$folderRel}/{$baseNameNoExt}__grid.webp";
+        $pdpRel   = "{$folderRel}/{$baseNameNoExt}__pdp.webp";
+
+        self::ensureWebpSupport();
+
+        self::createWebpVariant($originalAbs, $disk->path($thumbRel), self::$thumbWidth);
+        self::createWebpVariant($originalAbs, $disk->path($gridRel),  self::$gridWidth);
+        self::createWebpVariant($originalAbs, $disk->path($pdpRel),   self::$pdpWidth);
+
         return [
-            'original_path' => $originalPath,
-            'original_url' => $originalUrl,
-            'original_ext' => $origExt,
-            'original_mime' => $origMime,
-            'original_size_bytes' => $origSize,
-
-            'thumb_url_webp' => null,
-            'grid_url_webp'  => null,
-            'pdp_url_webp'   => null,
-            'zoom_url_webp'  => null,
-
-            'width' => null,
-            'height' => null,
-            'sort_order' => $sortOrder,
+            'original_rel' => $originalRel,
+            'thumb_rel' => $thumbRel,
+            'grid_rel' => $gridRel,
+            'pdp_rel' => $pdpRel,
+            'width' => $w,
+            'height' => $h,
         ];
     }
 
-    private static function encodeSet($img, string $path, int $w, int $h, int $quality): void
+    public static function toPublicUrl(?string $pathOrUrl): ?string
     {
-        $img->orientate();
+        if (!$pathOrUrl) return null;
 
-        // MIC tile crop (centar). Kasnije možemo focal point.
-        $img->fit($w, $h, function ($c) {
-            $c->upsize();
-        });
+        // Ako je već URL sa leading slash (/uploads/... ili /storage/...), vrati kako jeste
+        if (str_starts_with($pathOrUrl, '/')) return $pathOrUrl;
 
-        if (method_exists($img, 'strip')) {
-            $img->strip();
+        // Inače tretiraj kao relativnu putanju na disk('public')
+        return Storage::disk('public')->url($pathOrUrl);
+    }
+
+    public static function deleteIfExists(?string $pathOrUrl): void
+    {
+        if (!$pathOrUrl) return;
+
+        // Ako je /storage/... ili relativna -> disk('public')
+        if (!str_starts_with($pathOrUrl, '/uploads/')) {
+            $rel = ltrim($pathOrUrl, '/');
+            // ako je /storage/foo.jpg -> foo.jpg
+            $rel = preg_replace('#^storage/#', '', $rel) ?? $rel;
+            Storage::disk('public')->delete($rel);
+            return;
         }
 
-        $binary = (string) $img->encode('webp', $quality);
-        Storage::disk('public')->put($path, $binary);
+        // Legacy: /uploads/... je bio direktno u public
+        $abs = public_path(ltrim($pathOrUrl, '/'));
+        if (is_file($abs)) @unlink($abs);
+    }
+
+    // --------------------------
+    // GD helpers
+    // --------------------------
+
+    private static function ensureWebpSupport(): void
+    {
+        if (!function_exists('imagewebp')) {
+            throw new \RuntimeException('GD WebP nije podržan: function imagewebp() ne postoji. Omogući GD WebP ili koristi Imagick.');
+        }
+    }
+
+    private static function getImageSize(string $abs): array
+    {
+        $info = @getimagesize($abs);
+        if (!$info) return [null, null];
+        return [$info[0] ?? null, $info[1] ?? null];
+    }
+
+    private static function createWebpVariant(string $srcAbs, string $destAbs, int $targetWidth): void
+    {
+        $src = self::loadImage($srcAbs);
+        if (!$src) return;
+
+        $w = imagesx($src);
+        $h = imagesy($src);
+
+        if ($w <= 0 || $h <= 0) {
+            imagedestroy($src);
+            return;
+        }
+
+        $newW = min($targetWidth, $w);
+        $newH = (int) round(($h / $w) * $newW);
+
+        $dst = imagecreatetruecolor($newW, $newH);
+
+        // transparentnost (za PNG/WebP)
+        imagealphablending($dst, false);
+        imagesavealpha($dst, true);
+        $transparent = imagecolorallocatealpha($dst, 0, 0, 0, 127);
+        imagefilledrectangle($dst, 0, 0, $newW, $newH, $transparent);
+
+        imagecopyresampled($dst, $src, 0, 0, 0, 0, $newW, $newH, $w, $h);
+
+        @imagewebp($dst, $destAbs, 82);
+
+        imagedestroy($src);
+        imagedestroy($dst);
+    }
+
+    private static function loadImage(string $abs)
+    {
+        $ext = strtolower(pathinfo($abs, PATHINFO_EXTENSION));
+
+        try {
+            return match ($ext) {
+                'jpg', 'jpeg' => @imagecreatefromjpeg($abs),
+                'png'        => @imagecreatefrompng($abs),
+                'webp'       => function_exists('imagecreatefromwebp') ? @imagecreatefromwebp($abs) : null,
+                default      => null,
+            };
+        } catch (\Throwable $e) {
+            return null;
+        }
     }
 }

@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Support\ProductImageProcessor;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
@@ -21,9 +22,7 @@ class CatalogController extends Controller
             foreach ([$key, $key . '[]'] as $k) {
                 $pattern = '/(?:^|&)' . preg_quote($k, '/') . '=([^&]*)/i';
                 if (preg_match_all($pattern, $raw, $m) && !empty($m[1])) {
-                    foreach ($m[1] as $v) {
-                        $out[] = urldecode($v);
-                    }
+                    foreach ($m[1] as $v) $out[] = urldecode($v);
                 }
             }
         }
@@ -43,6 +42,9 @@ class CatalogController extends Controller
         return $out;
     }
 
+    // --------------------------
+    // LISTING
+    // --------------------------
     public function categoryProducts(Request $request, string $slug_path)
     {
         $category = DB::table('categories')
@@ -96,11 +98,8 @@ class CatalogController extends Controller
                     $w->whereIn('slug', $slugs);
                 }
                 if (!empty($ids)) {
-                    if (!empty($slugs)) {
-                        $w->orWhereIn('id', array_map('intval', $ids));
-                    } else {
-                        $w->whereIn('id', array_map('intval', $ids));
-                    }
+                    if (!empty($slugs)) $w->orWhereIn('id', array_map('intval', $ids));
+                    else $w->whereIn('id', array_map('intval', $ids));
                 }
             });
 
@@ -188,85 +187,50 @@ class CatalogController extends Controller
         $priceCol = Schema::hasColumn('products', 'price_rsd') ? 'price_rsd' : (Schema::hasColumn('products', 'price') ? 'price' : null);
         $imgCol = Schema::hasColumn('products', 'image_grid_url') ? 'image_grid_url' : (Schema::hasColumn('products', 'main_image_url') ? 'main_image_url' : null);
 
-        // --- NEW: fetch up to 5 images per product (WEBP preferred) in ONE query ---
+        // --- IMAGES: fetch up to 5 images per product in ONE query (original + webp variants) ---
         $productIds = $rows->pluck('id')->all();
-
-        $imagesByProduct = [];
-        if (!empty($productIds) && Schema::hasTable('product_images')) {
-            // detect best columns
-            $webpGrid = Schema::hasColumn('product_images', 'grid_url_webp') ? 'grid_url_webp' : null;
-            $webpAny  = Schema::hasColumn('product_images', 'url_webp') ? 'url_webp' : null;
-
-            $fallbackUrl =
-                Schema::hasColumn('product_images', 'url') ? 'url' :
-                (Schema::hasColumn('product_images', 'image_url') ? 'image_url' :
-                (Schema::hasColumn('product_images', 'path') ? 'path' : null));
-
-            $sortCol = Schema::hasColumn('product_images', 'sort_order') ? 'sort_order' : null;
-
-            $selectCols = ['product_id'];
-            if ($webpGrid) $selectCols[] = $webpGrid;
-            if ($webpAny) $selectCols[] = $webpAny;
-            if ($fallbackUrl) $selectCols[] = $fallbackUrl;
-            if ($sortCol) $selectCols[] = $sortCol;
-
-            $imgRows = DB::table('product_images')
-                ->whereIn('product_id', $productIds)
-                ->when($sortCol, fn($qq) => $qq->orderBy($sortCol))
-                ->orderBy('id')
-                ->get($selectCols);
-
-            foreach ($imgRows as $r) {
-                $pid = (int)$r->product_id;
-
-                // choose url: grid webp > any webp > fallback
-                $url = null;
-                if ($webpGrid && !empty($r->{$webpGrid})) $url = (string)$r->{$webpGrid};
-                elseif ($webpAny && !empty($r->{$webpAny})) $url = (string)$r->{$webpAny};
-                elseif ($fallbackUrl && !empty($r->{$fallbackUrl})) $url = (string)$r->{$fallbackUrl};
-
-                if (!$url) continue;
-
-                if (!isset($imagesByProduct[$pid])) $imagesByProduct[$pid] = [];
-                if (count($imagesByProduct[$pid]) >= 5) continue;
-
-                // uniq per product
-                if (!in_array($url, $imagesByProduct[$pid], true)) {
-                    $imagesByProduct[$pid][] = $url;
-                }
-            }
-        }
-        // --- END NEW ---
+        $imagesByProduct = $this->fetchImagesForProducts($productIds, 5);
 
         $products = $rows->map(function ($p) use ($nameCol, $slugCol, $priceCol, $imgCol, $imagesByProduct) {
             $pid = (int)$p->id;
 
+            // Legacy/main fallback column on products table
             $main = $imgCol ? ($p->{$imgCol} ?? null) : null;
+
             $imgs = $imagesByProduct[$pid] ?? [];
 
-            // fallback: ako nemamo slike iz product_images, bar ubaci main
-            if ($main && (empty($imgs) || !in_array($main, $imgs, true))) {
-                array_unshift($imgs, (string)$main);
+            // If no product_images exist, fallback to main_image_url as a single image (best-effort)
+            if (empty($imgs) && $main) {
+                $fallbackUrl = ProductImageProcessor::toPublicUrl((string)$main);
+                $imgs = [[
+                    'id' => null,
+                    'alt' => '',
+                    'sort_order' => 0,
+                    'original' => $fallbackUrl,
+                    'thumb' => $fallbackUrl,
+                    'grid' => $fallbackUrl,
+                    'pdp' => $fallbackUrl,
+                ]];
             }
 
-            // uniq + max 5
-            $out = [];
-            $seen = [];
-            foreach ($imgs as $u) {
-                $u = trim((string)$u);
-                if ($u === '' || isset($seen[$u])) continue;
-                $seen[$u] = true;
-                $out[] = $u;
-                if (count($out) >= 5) break;
+            // Primary image for listing: prefer first image grid, else main
+            $primaryGrid = null;
+            if (!empty($imgs)) {
+                $primaryGrid = $imgs[0]['grid'] ?? $imgs[0]['thumb'] ?? $imgs[0]['original'] ?? null;
             }
+            if (!$primaryGrid && $main) $primaryGrid = ProductImageProcessor::toPublicUrl((string)$main);
 
             return [
                 'id' => $p->id,
                 'name' => $nameCol ? ($p->{$nameCol} ?? '') : '',
                 'slug' => $slugCol ? ($p->{$slugCol} ?? (string)$p->id) : (string)$p->id,
                 'price_rsd' => $priceCol ? (int)($p->{$priceCol} ?? 0) : 0,
-                'image_grid_url' => $out[0] ?? ($main ? (string)$main : null),
-                'images' => $out, // ✅ NEW for list view mini gallery
+
+                // For old code paths (cards that expect a single image)
+                'image_grid_url' => $primaryGrid,
+
+                // NEW: full mini gallery objects for list view
+                'images' => $imgs,
             ];
         })->values();
 
@@ -297,7 +261,6 @@ class CatalogController extends Controller
                 ->orderBy('label')
                 ->get();
 
-            // NOTE: backend trenutno vraća SR code "brend" (kao što si pokazao)
             $facets[] = [
                 'code' => 'brend',
                 'label' => 'Brend',
@@ -338,7 +301,6 @@ class CatalogController extends Controller
                     ->orderBy('av.label')
                     ->get();
 
-                // backend šalje code-ove kao što su u bazi (ti si već prebacio na SR: velicina/boja/materijal)
                 $facets[] = [
                     'code' => $a->code,
                     'label' => $a->name,
@@ -386,31 +348,94 @@ class CatalogController extends Controller
         ]);
     }
 
-    private function getActiveAttributeCodesForCategory(int $categoryId): array
+    // --------------------------
+    // PRODUCT (MVP PDP)
+    // --------------------------
+    public function productBySlug(Request $request, string $slug)
     {
-        if (Schema::hasTable('category_attribute')) {
-            $mapped = DB::table('category_attribute as ca')
-                ->join('attributes as a', 'a.id', '=', 'ca.attribute_id')
-                ->where('ca.category_id', $categoryId)
-                ->where('a.is_active', 1)
-                ->orderBy('ca.sort')
-                ->pluck('a.code')
-                ->all();
+        $slug = trim((string)$slug);
+        if ($slug === '') return response()->json(['message' => 'Product not found'], 404);
 
-            if (!empty($mapped)) return $mapped;
+        $p = DB::table('products')->where('slug', $slug)->first();
+        if (!$p) return response()->json(['message' => 'Product not found'], 404);
+
+        $nameCol = Schema::hasColumn('products', 'name') ? 'name' : (Schema::hasColumn('products', 'title') ? 'title' : null);
+        $priceCol = Schema::hasColumn('products', 'price_rsd') ? 'price_rsd' : (Schema::hasColumn('products', 'price') ? 'price' : null);
+
+        $imagesByProduct = $this->fetchImagesForProducts([(int)$p->id], 30);
+        $imgs = $imagesByProduct[(int)$p->id] ?? [];
+
+        // (MVP) category slug_path za breadcrumbs: uzmi jednu kategoriju (najplića ili prva)
+        $categorySlugPath = null;
+        if (Schema::hasTable('category_product') && Schema::hasTable('categories')) {
+            $categorySlugPath = DB::table('category_product as cp')
+                ->join('categories as c', 'c.id', '=', 'cp.category_id')
+                ->where('cp.product_id', (int)$p->id)
+                ->where('c.is_active', 1)
+                ->orderByRaw('LENGTH(c.slug_path) ASC')
+                ->value('c.slug_path');
         }
 
-        if (Schema::hasTable('attributes')) {
-            return DB::table('attributes')
-                ->where('is_active', 1)
-                ->orderBy('sort')
-                ->pluck('code')
-                ->all();
-        }
-
-        return [];
+        return response()->json([
+            'id' => (int)$p->id,
+            'slug' => (string)$p->slug,
+            'name' => $nameCol ? (string)($p->{$nameCol} ?? '') : '',
+            'price_rsd' => $priceCol ? (int)($p->{$priceCol} ?? 0) : 0,
+            'category_slug_path' => $categorySlugPath,
+            'images' => $imgs,
+            'meta' => [
+                'seo_title' => null, // FE može da setuje: "{name} – {price} | Shop"
+            ],
+        ]);
     }
 
+    // --------------------------
+    // RESOLVE (category vs product)
+    // --------------------------
+    public function resolve(Request $request)
+    {
+        $path = trim((string)$request->query('path', ''), "/");
+        if ($path === '') return response()->json(['type' => 'home'], 200);
+
+        // 1) Ako je exact category slug_path
+        $cat = DB::table('categories')->where('slug_path', $path)->where('is_active', 1)->first();
+        if ($cat) {
+            return response()->json([
+                'type' => 'category',
+                'category_id' => $cat->id,
+                'slug_path' => $cat->slug_path
+            ], 200);
+        }
+
+        // 2) Inače tretiraj poslednji segment kao product slug (MVP)
+        $parts = explode('/', $path);
+        $last = trim((string)end($parts));
+        if ($last !== '' && Schema::hasColumn('products', 'slug')) {
+            $prod = DB::table('products')->where('slug', $last)->first(['id', 'slug']);
+            if ($prod) {
+                // pokuša da nađe category slug_path kao prefix (ako postoji)
+                $prefix = implode('/', array_slice($parts, 0, -1));
+                $prefixCat = null;
+                if ($prefix !== '') {
+                    $c2 = DB::table('categories')->where('slug_path', $prefix)->where('is_active', 1)->first(['slug_path']);
+                    if ($c2) $prefixCat = (string)$c2->slug_path;
+                }
+
+                return response()->json([
+                    'type' => 'product',
+                    'product_id' => (int)$prod->id,
+                    'slug' => (string)$prod->slug,
+                    'category_slug_path' => $prefixCat,
+                ], 200);
+            }
+        }
+
+        return response()->json(['type' => 'not_found'], 404);
+    }
+
+    // --------------------------
+    // CATEGORIES TREE
+    // --------------------------
     public function categoriesTree()
     {
         $rows = DB::table('categories')
@@ -446,20 +471,91 @@ class CatalogController extends Controller
         return response()->json(['items' => $build(0, 0)]);
     }
 
-    public function resolve(Request $request)
+    // --------------------------
+    // HELPERS
+    // --------------------------
+    private function getActiveAttributeCodesForCategory(int $categoryId): array
     {
-        $path = trim((string)$request->query('path', ''), "/");
-        if ($path === '') return response()->json(['type' => 'home'], 200);
+        if (Schema::hasTable('category_attribute')) {
+            $mapped = DB::table('category_attribute as ca')
+                ->join('attributes as a', 'a.id', '=', 'ca.attribute_id')
+                ->where('ca.category_id', $categoryId)
+                ->where('a.is_active', 1)
+                ->orderBy('ca.sort')
+                ->pluck('a.code')
+                ->all();
 
-        $cat = DB::table('categories')->where('slug_path', $path)->where('is_active', 1)->first();
-        if ($cat) {
-            return response()->json([
-                'type' => 'category',
-                'category_id' => $cat->id,
-                'slug_path' => $cat->slug_path
-            ], 200);
+            if (!empty($mapped)) return $mapped;
         }
 
-        return response()->json(['type' => 'not_found'], 404);
+        if (Schema::hasTable('attributes')) {
+            return DB::table('attributes')
+                ->where('is_active', 1)
+                ->orderBy('sort')
+                ->pluck('code')
+                ->all();
+        }
+
+        return [];
+    }
+
+    private function fetchImagesForProducts(array $productIds, int $limitPerProduct = 5): array
+    {
+        $imagesByProduct = []; // pid => [dto...]
+
+        if (empty($productIds) || !Schema::hasTable('product_images')) return $imagesByProduct;
+
+        $hasUrl = Schema::hasColumn('product_images', 'url');
+        $hasThumb = Schema::hasColumn('product_images', 'thumb_url');
+        $hasGrid = Schema::hasColumn('product_images', 'grid_url');
+        $hasPdp = Schema::hasColumn('product_images', 'pdp_url');
+        $hasAlt = Schema::hasColumn('product_images', 'alt');
+        $hasSort = Schema::hasColumn('product_images', 'sort_order');
+
+        $selectCols = ['id', 'product_id'];
+        if ($hasUrl) $selectCols[] = 'url';
+        if ($hasThumb) $selectCols[] = 'thumb_url';
+        if ($hasGrid) $selectCols[] = 'grid_url';
+        if ($hasPdp) $selectCols[] = 'pdp_url';
+        if ($hasAlt) $selectCols[] = 'alt';
+        if ($hasSort) $selectCols[] = 'sort_order';
+
+        $imgRows = DB::table('product_images')
+            ->whereIn('product_id', $productIds)
+            ->when($hasSort, fn ($qq) => $qq->orderBy('sort_order'))
+            ->orderBy('id')
+            ->get($selectCols);
+
+        foreach ($imgRows as $r) {
+            $pid = (int)$r->product_id;
+
+            if (!isset($imagesByProduct[$pid])) $imagesByProduct[$pid] = [];
+            if (count($imagesByProduct[$pid]) >= $limitPerProduct) continue;
+
+            $dto = [
+                'id' => (int)$r->id,
+                'alt' => $hasAlt ? (string)($r->alt ?? '') : '',
+                'sort_order' => $hasSort ? (int)($r->sort_order ?? 0) : 0,
+                'original' => $hasUrl ? ProductImageProcessor::toPublicUrl($r->url ?? null) : null,
+                'thumb' => $hasThumb ? ProductImageProcessor::toPublicUrl($r->thumb_url ?? null) : null,
+                'grid' => $hasGrid ? ProductImageProcessor::toPublicUrl($r->grid_url ?? null) : null,
+                'pdp' => $hasPdp ? ProductImageProcessor::toPublicUrl($r->pdp_url ?? null) : null,
+            ];
+
+            $usable = $dto['grid'] ?? $dto['thumb'] ?? $dto['original'];
+            if (!$usable) continue;
+
+            $uniqKey = (string)($dto['grid'] ?? $usable);
+            $already = false;
+            foreach ($imagesByProduct[$pid] as $existing) {
+                $ek = (string)($existing['grid'] ?? $existing['thumb'] ?? $existing['original'] ?? '');
+                if ($ek !== '' && $ek === $uniqKey) { $already = true; break; }
+            }
+            if ($already) continue;
+
+            $imagesByProduct[$pid][] = $dto;
+        }
+
+        return $imagesByProduct;
     }
 }
