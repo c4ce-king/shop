@@ -32,12 +32,20 @@ const SORT_SELECT_ALL: Array<{ key: SortKey; label: string; disabled?: boolean }
 
 const PER_PAGE_OPTIONS = [12, 24, 36, 48, 60] as const;
 
+const nfSR = new Intl.NumberFormat("sr-RS");
+
 function formatRSD(n: number) {
-  return new Intl.NumberFormat("sr-RS").format(Math.round(n)) + " RSD";
+  return nfSR.format(Math.round(n)) + " RSD";
+}
+
+function formatRSDRange(lo: number, hi: number) {
+  const a = nfSR.format(Math.round(lo));
+  const b = nfSR.format(Math.round(hi));
+  return `${a} – ${b} RSD`;
 }
 
 type ChipItem =
-  | { kind: "facet"; code: "brand" | "size" | "color" | "material"; value: string; label: string }
+  | { kind: "facet"; code: string; value: string; label: string }
   | { kind: "price"; label: string }
   | { kind: "sort"; label: string }
   | { kind: "view"; label: string }
@@ -45,56 +53,85 @@ type ChipItem =
 
 function Chip({ label, onRemove }: { label: string; onRemove: () => void }) {
   return (
-    <span className="mic-pill">
+    <span className="mic-chip-compact">
+      <span className="mic-chip-dot" aria-hidden="true" />
       <span className="max-w-[220px] truncate">{label}</span>
-      <button type="button" className="rounded-full p-0.5 hover:bg-black/10" onClick={onRemove} aria-label="Ukloni">
-        <X className="h-3.5 w-3.5" />
+      <button
+        type="button"
+        className="rounded-full p-0.5 hover:bg-black/10"
+        onClick={onRemove}
+        aria-label="Ukloni"
+        title="Ukloni"
+      >
+        <X className="h-3 w-3" />
       </button>
     </span>
   );
 }
 
 function ViewToggle({ value, onChange }: { value: ViewMode; onChange: (v: ViewMode) => void }) {
+  const isGrid = value === "galerija";
+  const isList = value === "lista";
+
   return (
-    <div className="inline-flex rounded-md border bg-white p-1">
-      <button
-        type="button"
-        onClick={() => onChange("galerija")}
-        className={[
-          "inline-flex items-center gap-2 rounded-md px-2.5 py-1.5 text-[12px] transition",
-          value === "galerija" ? "bg-black text-white" : "hover:bg-black/5",
-        ].join(" ")}
-        aria-pressed={value === "galerija"}
-        title="Galerija"
-      >
-        <LayoutGrid className="h-4 w-4" />
-        Grid
-      </button>
-      <button
-        type="button"
-        onClick={() => onChange("lista")}
-        className={[
-          "inline-flex items-center gap-2 rounded-md px-2.5 py-1.5 text-[12px] transition",
-          value === "lista" ? "bg-black text-white" : "hover:bg-black/5",
-        ].join(" ")}
-        aria-pressed={value === "lista"}
-        title="Lista"
-      >
-        <List className="h-4 w-4" />
-        List
-      </button>
+    <div className="inline-flex rounded-md bg-black/[0.03] p-1">
+      <div className="flex items-center gap-2">
+        <button
+          type="button"
+          onClick={() => onChange("galerija")}
+          className={[
+            "inline-flex items-center gap-2 px-2.5 py-1.5 text-[12px] transition",
+            "border",
+            isGrid
+              ? "rounded-[6px] bg-black text-white border-transparent"
+              : "rounded-md bg-white text-black/80 border-[rgb(var(--border))] hover:bg-black/5",
+          ].join(" ")}
+          aria-pressed={isGrid}
+          title="Grid prikaz"
+        >
+          <LayoutGrid className="h-4 w-4" />
+          Grid
+        </button>
+
+        <button
+          type="button"
+          onClick={() => onChange("lista")}
+          className={[
+            "inline-flex items-center gap-2 px-2.5 py-1.5 text-[12px] transition",
+            "border",
+            isList
+              ? "rounded-[6px] bg-black text-white border-transparent"
+              : "rounded-md bg-white text-black/80 border-[rgb(var(--border))] hover:bg-black/5",
+          ].join(" ")}
+          aria-pressed={isList}
+          title="List prikaz"
+        >
+          <List className="h-4 w-4" />
+          List
+        </button>
+      </div>
     </div>
   );
 }
 
 export default function CategoryListingClient({ slugPath }: Props) {
-  const { filters, toggleMulti, removeMulti, setPriceDraft, setPrice, setSort, setPage, setPerPage, setView, resetAll } =
-    useUrlFilters();
+  const {
+    filters,
+    toggleMulti,
+    removeMulti,
+    clearMulti,
+    setPriceDraft,
+    setPrice,
+    setSort,
+    setPage,
+    setPerPage,
+    setView,
+    resetAll,
+  } = useUrlFilters();
 
   const q = useCategoryProducts(slugPath, filters);
   const data = q.data;
 
-  // --- price bounds from API ---
   const [bounds, setBounds] = React.useState<{ min: number; max: number } | null>(null);
 
   React.useEffect(() => {
@@ -117,137 +154,145 @@ export default function CategoryListingClient({ slugPath }: Props) {
     return m;
   }, [facets]);
 
-  const sliderReady = bounds != null;
-  const minAvail = bounds?.min ?? 0;
-  const maxAvail = bounds?.max ?? 0;
+  // ✅ show "—" until API arrives, not 0
+  const totalMaybe = data?.meta?.total;
+  const totalLabel = totalMaybe == null ? "—" : String(totalMaybe);
 
-  const committedMin = filters.min ?? (sliderReady ? minAvail : 0);
-  const committedMax = filters.max ?? (sliderReady ? maxAvail : 0);
+  const total = data?.meta?.total ?? 0;
+  const page = filters.page ?? 1;
+  const pageCount = data?.meta?.page_count ?? 1;
+
+  const perPage = filters.perPage ?? 24;
+  const view = (filters.view ?? "galerija") as ViewMode;
+
+  const facetSections = React.useMemo(() => {
+    const knownOrder = ["brand", "size", "color", "material"];
+    const byKnown = knownOrder.map((code) => facetByCode.get(code)).filter(Boolean) as Facet[];
+    const rest = facets.filter((f) => !knownOrder.includes(f.code));
+    return [...byKnown, ...rest];
+  }, [facetByCode, facets]);
+
+  const chips: ChipItem[] = React.useMemo(() => {
+    const out: ChipItem[] = [];
+
+    for (const facet of facetSections) {
+      const code = facet.code;
+
+      let selectedArr: string[] = [];
+      if (code === "brand") selectedArr = filters.brand ?? [];
+      else if (code === "size") selectedArr = filters.size ?? [];
+      else if (code === "color") selectedArr = filters.color ?? [];
+      else if (code === "material") selectedArr = filters.material ?? [];
+      else selectedArr = filters.facets?.[code] ?? [];
+
+      if (!selectedArr.length) continue;
+
+      for (const value of selectedArr) {
+        const opt = facet.options?.find((o) => o.value === value);
+        const vLabel = opt?.label ?? value;
+        out.push({ kind: "facet", code, value, label: `${facet.label}: ${vLabel}` });
+      }
+    }
+
+    if (filters.min != null || filters.max != null) {
+      const minV = filters.min ?? bounds?.min ?? 0;
+      const maxV = filters.max ?? bounds?.max ?? 0;
+      out.push({ kind: "price", label: `Cena: ${formatRSDRange(minV, maxV)}` });
+    }
+
+    if ((filters.sort ?? "podrazumevano") !== "podrazumevano") {
+      const label = SORT_SELECT_ALL.find((x) => x.key === (filters.sort ?? "podrazumevano"))?.label ?? "Sort";
+      out.push({ kind: "sort", label: `Sort: ${label}` });
+    }
+
+    if (view !== "galerija") out.push({ kind: "view", label: "Prikaz: Lista" });
+    if (perPage !== 24) out.push({ kind: "perPage", label: `Po strani: ${perPage}` });
+
+    return out;
+  }, [facetSections, filters, bounds, view, perPage]);
+
+  const activeCount = React.useMemo(() => {
+    let c = 0;
+
+    c += filters.brand?.length ?? 0;
+    c += filters.size?.length ?? 0;
+    c += filters.color?.length ?? 0;
+    c += filters.material?.length ?? 0;
+
+    if (filters.facets) {
+      for (const arr of Object.values(filters.facets)) c += Array.isArray(arr) ? arr.length : 0;
+    }
+
+    if (filters.min != null || filters.max != null) c += 1;
+    return c;
+  }, [filters]);
+
+  const canReset =
+    activeCount > 0 || (filters.sort ?? "podrazumevano") !== "podrazumevano" || view !== "galerija" || perPage !== 24;
+
+  function removeChip(c: ChipItem) {
+    if (c.kind === "facet") return removeMulti(c.code, c.value);
+    if (c.kind === "price") return setPrice(null, null);
+    if (c.kind === "sort") return setSort("podrazumevano");
+    if (c.kind === "view") return setView("galerija");
+    if (c.kind === "perPage") return setPerPage(24);
+  }
+
+  function onToggleFacet(code: string, value: string) {
+    toggleMulti(code, value);
+  }
 
   const [draftPrice, setDraftPrice] = React.useState<[number, number] | null>(null);
 
   React.useEffect(() => {
     setDraftPrice(null);
-  }, [filters.min, filters.max, filters.page, filters.perPage, filters.sort, filters.view, slugPath]);
+  }, [filters.min, filters.max]);
 
-  const uiMin = draftPrice?.[0] ?? committedMin;
-  const uiMax = draftPrice?.[1] ?? committedMax;
+  const uiMin = draftPrice?.[0] ?? filters.min ?? bounds?.min ?? 0;
+  const uiMax = draftPrice?.[1] ?? filters.max ?? bounds?.max ?? 0;
 
-  const view: ViewMode = (filters.view ?? "galerija") as ViewMode;
-  const perPage = filters.perPage ?? 24;
+  const [sliderReadyOnce, setSliderReadyOnce] = React.useState(false);
+  React.useEffect(() => {
+    if (!!bounds && !sliderReadyOnce) setSliderReadyOnce(true);
+  }, [bounds, sliderReadyOnce]);
 
-  const canReset =
-    (filters.brand?.length ?? 0) > 0 ||
-    (filters.size?.length ?? 0) > 0 ||
-    (filters.color?.length ?? 0) > 0 ||
-    (filters.material?.length ?? 0) > 0 ||
-    filters.min != null ||
-    filters.max != null ||
-    (filters.sort ?? "podrazumevano") !== "podrazumevano" ||
-    (filters.page ?? 1) !== 1 ||
-    (filters.perPage ?? 24) !== 24 ||
-    (filters.view ?? "galerija") !== "galerija";
-
-  const activeCount =
-    (filters.brand?.length ?? 0) +
-    (filters.size?.length ?? 0) +
-    (filters.color?.length ?? 0) +
-    (filters.material?.length ?? 0) +
-    (filters.min != null || filters.max != null ? 1 : 0) +
-    ((filters.sort ?? "podrazumevano") !== "podrazumevano" ? 1 : 0) +
-    ((filters.view ?? "galerija") !== "galerija" ? 1 : 0) +
-    ((filters.perPage ?? 24) !== 24 ? 1 : 0);
-
-  const chips: ChipItem[] = React.useMemo(() => {
-    const out: ChipItem[] = [];
-
-    const pushFacet = (code: "brand" | "size" | "color" | "material", values?: string[]) => {
-      const facet = facetByCode.get(code);
-      for (const v of values ?? []) {
-        const optLabel = facet?.options.find((o) => o.value === v)?.label ?? v;
-        const prefix = code === "brand" ? "Brend" : code === "size" ? "Veličina" : code === "color" ? "Boja" : "Materijal";
-        out.push({ kind: "facet", code, value: v, label: `${prefix}: ${optLabel}` });
-      }
-    };
-
-    pushFacet("brand", filters.brand);
-    pushFacet("size", filters.size);
-    pushFacet("color", filters.color);
-    pushFacet("material", filters.material);
-
-    if (filters.min != null || filters.max != null) {
-      out.push({
-        kind: "price",
-        label: `Cena: ${formatRSD(filters.min ?? minAvail)} – ${formatRSD(filters.max ?? maxAvail)}`,
-      });
-    }
-
-    if ((filters.sort ?? "podrazumevano") !== "podrazumevano") {
-      const s = filters.sort ?? "podrazumevano";
-      const label = SORT_SELECT_ALL.find((x) => x.key === s)?.label ?? s;
-      out.push({ kind: "sort", label: `Sort: ${label}` });
-    }
-
-    if ((filters.view ?? "galerija") !== "galerija") {
-      out.push({ kind: "view", label: `Prikaz: ${(filters.view ?? "galerija") === "lista" ? "Lista" : "Galerija"}` });
-    }
-
-    if ((filters.perPage ?? 24) !== 24) {
-      out.push({ kind: "perPage", label: `Po strani: ${filters.perPage}` });
-    }
-
-    return out;
-  }, [filters, facetByCode, minAvail, maxAvail]);
-
-  const removeChip = (c: ChipItem) => {
-    if (c.kind === "price") return setPrice(null, null);
-    if (c.kind === "sort") return setSort("podrazumevano");
-    if (c.kind === "view") return setView("galerija");
-    if (c.kind === "perPage") return setPerPage(24);
-    if (c.kind === "facet") return removeMulti(c.code as any, c.value);
-  };
-
-  const orderedFacetCodes: Array<"brand" | "size" | "color" | "material"> = ["brand", "size", "color", "material"];
-  const facetSections = orderedFacetCodes
-    .map((code) => facetByCode.get(code))
-    .filter((f): f is Facet => !!f && (f.options?.length ?? 0) > 0);
-
-  const page = data?.pagination?.page ?? (filters.page ?? 1);
-  const total = data?.pagination?.total ?? 0;
-  const pageCount = Math.max(1, Math.ceil(total / Math.max(1, perPage)));
-
-  const onToggleFacet = (facetCode: string, value: string) => {
-    toggleMulti(facetCode as any, value);
-  };
-
-  // shared filter content (sidebar + drawer)
   const FiltersContent = (
-    <div className="flex flex-col gap-3">
-      {/* Price */}
-      <div className="border-b pb-3">
-        <div className="flex items-center justify-between">
-          <div className="text-[13px] font-semibold">Cena</div>
-          <div className="text-[11px] mic-muted">
-            {sliderReady ? `${formatRSD(uiMin)} – ${formatRSD(uiMax)}` : "…"}
+    <div className="flex flex-col gap-4">
+      <div className="mic-card p-3">
+        <div className="flex items-start justify-between gap-2">
+          <div className="min-w-0">
+            <div className="text-[13px] font-semibold">Cena</div>
+            <div className="mt-1 text-[12px] mic-muted whitespace-nowrap tabular-nums">
+              {formatRSDRange(Math.min(uiMin, uiMax), Math.max(uiMin, uiMax))}
+            </div>
           </div>
+
+          <button
+            type="button"
+            className="mic-btn h-8 w-8 p-0 disabled:opacity-50"
+            onClick={() => setPrice(null, null)}
+            disabled={filters.min == null && filters.max == null}
+            aria-label="Poništi raspon cene"
+            title="Poništi raspon cene"
+          >
+            <X className="h-4 w-4" />
+          </button>
         </div>
 
-        <div className="mt-2">
+        <div className="mt-3">
           <RangeSlider
-            min={sliderReady ? minAvail : 0}
-            max={sliderReady ? maxAvail : 0}
-            step={10}
-            disabled={!sliderReady}
+            disabled={!sliderReadyOnce}
+            min={bounds?.min ?? 0}
+            max={bounds?.max ?? 0}
             value={[Math.min(uiMin, uiMax), Math.max(uiMin, uiMax)]}
             onValueChange={(v) => {
-              if (!sliderReady) return;
+              if (!sliderReadyOnce) return;
               const next: [number, number] = [Math.min(v[0], v[1]), Math.max(v[0], v[1])];
               setDraftPrice(next);
-              // draft ne gura URL (brže)
               setPriceDraft(next[0], next[1]);
             }}
             onValueCommit={(v) => {
-              if (!sliderReady) return;
+              if (!sliderReadyOnce) return;
               const next: [number, number] = [Math.min(v[0], v[1]), Math.max(v[0], v[1])];
               setDraftPrice(null);
               setPrice(next[0], next[1]);
@@ -255,205 +300,224 @@ export default function CategoryListingClient({ slugPath }: Props) {
             format={formatRSD}
           />
 
-          {!sliderReady ? <div className="mt-2 text-[11px] mic-muted-2">Čekam opseg cene iz API-ja…</div> : null}
+          {!bounds ? <div className="mt-2 text-[11px] mic-muted-2">Čekam opseg cene iz API-ja…</div> : null}
         </div>
       </div>
 
-      {/* Facets */}
       <div className="flex flex-col gap-3">
         {facetSections.map((facet) => {
-          const selectedArr = (filters[facet.code as any] as string[] | undefined) ?? [];
+          let selectedArr: string[] = [];
+          if (facet.code === "brand") selectedArr = filters.brand ?? [];
+          else if (facet.code === "size") selectedArr = filters.size ?? [];
+          else if (facet.code === "color") selectedArr = filters.color ?? [];
+          else if (facet.code === "material") selectedArr = filters.material ?? [];
+          else selectedArr = filters.facets?.[facet.code] ?? [];
+
           const selected = new Set(selectedArr);
 
           return (
-            <FacetBlock key={facet.code} facet={facet} selected={selected} onToggle={onToggleFacet} defaultVisible={6} />
+            <FacetBlock
+              key={facet.code}
+              facet={facet}
+              selected={selected}
+              onToggle={onToggleFacet}
+              onClearFacet={(code) => clearMulti(code)}
+              defaultVisible={6}
+            />
           );
         })}
       </div>
     </div>
   );
 
+  // ✅ desktop-like indicator: only when fetching
+  const mobileSubtitle = (
+    <span className="inline-flex items-center gap-2">
+      <span className="tabular-nums">{totalLabel} proizvoda</span>
+      {q.isFetching ? <span className="inline-block h-2 w-2 rounded-full bg-black/30 animate-pulse" /> : null}
+    </span>
+  );
+
   return (
     <div className="mx-auto w-full max-w-6xl px-3 py-4">
-      {/* Header */}
       <div className="mb-3 flex items-start justify-between gap-3">
         <div className="min-w-0">
           <div className="text-[11px] mic-muted-2">{slugPath}</div>
           <h1 className="truncate text-xl font-semibold">{data?.category?.name ?? "Kategorija"}</h1>
           <div className="mt-1 text-[12px] mic-muted">
             {total} proizvoda • strana {page}/{pageCount}
-            {q.isFetching ? <span className="ml-2 inline-block h-2 w-2 rounded-full bg-black/30 align-middle animate-pulse" /> : null}
+            {q.isFetching ? (
+              <span className="ml-2 inline-block h-2 w-2 rounded-full bg-black/30 align-middle animate-pulse" />
+            ) : null}
           </div>
         </div>
 
         <button
           type="button"
-          className="mic-btn h-9 px-3 text-[12px] disabled:opacity-50"
+          className={[canReset ? "mic-btn-primary" : "mic-btn", "h-9 px-3 text-[12px] disabled:opacity-50"].join(" ")}
           onClick={resetAll}
           disabled={!canReset}
-          title="Reset filtera"
+          title="Poništi filtere"
         >
-          Reset
+          Poništi filtere
         </button>
       </div>
 
-{/* Mobile bottom bar (controls + chips) */}
-<div className="mic-bottombar lg:hidden">
-  <div className="mx-auto w-full max-w-6xl px-3 py-2">
-    <div className="flex items-center justify-between gap-2">
-      <MobileFiltersDrawer
-        activeCount={activeCount}
-        subtitle={
-          <span>
-            {total} proizvoda • {q.isFetching ? "osvežavam…" : "spremno"}
-          </span>
-        }
-      >
-        {FiltersContent}
-      </MobileFiltersDrawer>
+      <div className="lg:hidden mb-3">
+        <div className="mic-card p-2">
+          <div className="flex items-center justify-between gap-2">
+            <MobileFiltersDrawer
+              activeCount={activeCount}
+              subtitle={mobileSubtitle}
+              canReset={canReset}
+              onReset={resetAll}
+            >
+              {FiltersContent}
+            </MobileFiltersDrawer>
 
-      <div className="flex items-center gap-2">
-        <ViewToggle value={view} onChange={setView} />
-        <select
-          className="mic-select"
-          value={filters.sort ?? "podrazumevano"}
-          onChange={(e) => setSort(e.target.value as SortKey)}
-          title="Sort"
-        >
-          {SORT_SELECT_ALL.map((opt) => (
-            <option key={opt.key} value={opt.key} disabled={opt.disabled}>
-              {opt.label}
-            </option>
-          ))}
-        </select>
+            <div className="flex items-center gap-2">
+              <ViewToggle value={view} onChange={setView} />
+              <select
+                className="mic-select"
+                value={filters.sort ?? "podrazumevano"}
+                onChange={(e) => setSort(e.target.value as SortKey)}
+                title="Sort"
+              >
+                {SORT_SELECT_ALL.map((opt) => (
+                  <option key={opt.key} value={opt.key} disabled={opt.disabled}>
+                    {opt.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          <div className="mt-2 flex items-center justify-between gap-2">
+            <div className="text-[12px] mic-muted">Po strani</div>
+            <select className="mic-select" value={perPage} onChange={(e) => setPerPage(Number(e.target.value))}>
+              {PER_PAGE_OPTIONS.map((n) => (
+                <option key={n} value={n}>
+                  {n}
+                </option>
+              ))}
+            </select>
+          </div>
+        </div>
       </div>
-    </div>
-
-    <div className="mt-2 flex items-center justify-between gap-2">
-      <div className="text-[12px] mic-muted">Po strani</div>
-      <select className="mic-select" value={perPage} onChange={(e) => setPerPage(Number(e.target.value))}>
-        {PER_PAGE_OPTIONS.map((n) => (
-          <option key={n} value={n}>
-            {n}
-          </option>
-        ))}
-      </select>
-    </div>
-
-    {/* chips (mobile) */}
-    <div className="mt-2 flex gap-2 overflow-x-auto pb-1">
-{chips.length ? (
-  <div className="mt-2 flex gap-2 overflow-x-auto pb-1">
-    {chips.map((c) => (
-      <Chip
-        key={`${c.kind}:${"code" in c ? c.code : ""}:${"value" in c ? c.value : ""}:${c.label}`}
-        label={c.label}
-        onRemove={() => removeChip(c)}
-      />
-    ))}
-  </div>
-) : null}
-    </div>
-  </div>
-</div>
-
-{/* Spacer da bottom bar ne prekriva sadržaj (samo mobile) */}
-<div className="h-[96px] lg:hidden" />
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-[280px_1fr]">
-        {/* Sidebar (desktop) */}
-        <aside className="hidden lg:block lg:sticky lg:top-3 lg:h-[calc(100vh-24px)] lg:overflow-auto">
+        <aside className="hidden lg:block">
           <div className="mic-card p-3">
             <div className="text-[13px] font-semibold">Filteri</div>
             <div className="mt-3">{FiltersContent}</div>
           </div>
         </aside>
 
-        {/* Main */}
         <main className="flex flex-col gap-3">
-          {/* Active chips (desktop) */}
-          <div className="hidden lg:flex flex-wrap items-center gap-2">
-            {chips.length ? (
-              chips.map((c) => (
-                <Chip
-                  key={`${c.kind}:${"code" in c ? c.code : ""}:${"value" in c ? c.value : ""}:${c.label}`}
-                  label={c.label}
-                  onRemove={() => removeChip(c)}
-                />
-              ))
-            ) : (
-              <div className="text-[12px] mic-muted">Nema aktivnih filtera.</div>
-            )}
-          </div>
-
-          {/* Sort/controls bar (desktop) */}
-          <div className="mic-card p-3 hidden lg:block">
-            <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-              <div className="flex flex-wrap items-center gap-2">
-                <div className="text-[12px] font-semibold text-black/70">Sort:</div>
-
-                <div className="flex flex-wrap gap-1.5">
-                  {SORT_TABS.map((t) => {
-                    const active = (filters.sort ?? "podrazumevano") === t.key;
-                    return (
-                      <button
-                        key={t.key}
-                        type="button"
-                        disabled={t.disabled}
-                        onClick={() => setSort(t.key)}
-                        className={[
-                          "h-8 rounded-md border px-2.5 text-[12px] transition",
-                          active ? "bg-black text-white border-black" : "bg-white hover:bg-black/5",
-                          t.disabled ? "opacity-50 cursor-not-allowed" : "",
-                        ].join(" ")}
-                      >
-                        {t.label}
-                      </button>
-                    );
-                  })}
-                </div>
-
-                <select
-                  className="mic-select ml-1"
-                  value={filters.sort ?? "podrazumevano"}
-                  onChange={(e) => setSort(e.target.value as SortKey)}
-                  title="Detaljnije sortiranje"
-                >
-                  {SORT_SELECT_ALL.map((opt) => (
-                    <option key={opt.key} value={opt.key} disabled={opt.disabled}>
-                      {opt.label}
-                    </option>
+          {chips.length ? (
+            <div className="lg:hidden">
+              <div className="mic-card p-2">
+                <div className="flex gap-2 overflow-x-auto pb-1">
+                  {chips.map((c) => (
+                    <Chip
+                      key={`${c.kind}:${"code" in c ? c.code : ""}:${"value" in c ? c.value : ""}:${c.label}`}
+                      label={c.label}
+                      onRemove={() => removeChip(c)}
+                    />
                   ))}
-                </select>
+                </div>
               </div>
+            </div>
+          ) : null}
 
-              <div className="flex flex-wrap items-center gap-2">
-                <ViewToggle value={view} onChange={setView} />
+          <div className="hidden lg:block">
+            <div className="mic-card p-3">
+              <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                <div className="flex flex-wrap items-center gap-2">
+                  <div className="text-[12px] font-semibold text-black/70">Sort:</div>
 
-                <div className="flex items-center gap-2">
-                  <div className="text-[12px] font-semibold text-black/70">Po strani</div>
-                  <select className="mic-select" value={perPage} onChange={(e) => setPerPage(Number(e.target.value))}>
-                    {PER_PAGE_OPTIONS.map((n) => (
-                      <option key={n} value={n}>
-                        {n}
+                  <div className="flex flex-wrap gap-2">
+                    {SORT_TABS.map((t) => {
+                      const activeTab = (filters.sort ?? "podrazumevano") === t.key;
+
+                      return (
+                        <button
+                          key={t.key}
+                          type="button"
+                          disabled={t.disabled}
+                          onClick={() => setSort(t.key)}
+                          className={[
+                            "h-8 px-2.5 text-[12px] transition border",
+                            activeTab
+                              ? "rounded-[6px] bg-black text-white border-transparent"
+                              : "rounded-md bg-white text-black/80 border-[rgb(var(--border))] hover:bg-black/5 hover:border-[rgb(var(--border-strong))]",
+                            t.disabled ? "opacity-50 cursor-not-allowed" : "",
+                          ].join(" ")}
+                          title={`Sort: ${t.label}`}
+                        >
+                          {t.label}
+                        </button>
+                      );
+                    })}
+                  </div>
+
+                  <select
+                    className="mic-select ml-1"
+                    value={filters.sort ?? "podrazumevano"}
+                    onChange={(e) => setSort(e.target.value as SortKey)}
+                    title="Detaljnije sortiranje"
+                  >
+                    {SORT_SELECT_ALL.map((opt) => (
+                      <option key={opt.key} value={opt.key} disabled={opt.disabled}>
+                        {opt.label}
                       </option>
                     ))}
                   </select>
                 </div>
-              </div>
-            </div>
 
-            {q.error ? (
-              <div className="mt-3 rounded-md border border-red-200 bg-red-50 p-3 text-[12px]">
-                Greška: {(q.error as Error).message}
+                <div className="flex flex-wrap items-center gap-2">
+                  <ViewToggle value={view} onChange={setView} />
+
+                  <div className="flex items-center gap-2">
+                    <div className="text-[12px] font-semibold text-black/70">Po strani</div>
+                    <select className="mic-select" value={perPage} onChange={(e) => setPerPage(Number(e.target.value))}>
+                      {PER_PAGE_OPTIONS.map((n) => (
+                        <option key={n} value={n}>
+                          {n}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
               </div>
-            ) : null}
+
+              <div className="mt-3 border-t pt-3" style={{ borderColor: "rgb(var(--border))" }}>
+                {chips.length ? (
+                  <div className="flex flex-wrap items-center gap-2">
+                    {chips.map((c) => (
+                      <Chip
+                        key={`${c.kind}:${"code" in c ? c.code : ""}:${"value" in c ? c.value : ""}:${c.label}`}
+                        label={c.label}
+                        onRemove={() => removeChip(c)}
+                      />
+                    ))}
+                  </div>
+                ) : (
+                  <div className="text-[12px] mic-muted">Nema aktivnih filtera.</div>
+                )}
+              </div>
+
+              {q.error ? (
+                <div className="mt-3 rounded-md border border-red-200 bg-red-50 p-3 text-[12px]">
+                  Greška: {(q.error as Error).message}
+                </div>
+              ) : null}
+            </div>
           </div>
 
-          {/* Results */}
           <div className="mic-card p-3">
             {view === "galerija" ? (
-              <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-4">
+              <div className="grid grid-cols-2 gap-2 md:grid-cols-3 xl:grid-cols-4">
                 {(data?.products ?? []).map((p) => (
                   <ProductCardGallery key={p.id} slugPath={slugPath} p={p} />
                 ))}
@@ -466,7 +530,6 @@ export default function CategoryListingClient({ slugPath }: Props) {
               </div>
             )}
 
-            {/* Pagination */}
             <div className="mt-4 flex items-center justify-between gap-2">
               <button
                 type="button"

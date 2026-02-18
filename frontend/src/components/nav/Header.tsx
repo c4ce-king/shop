@@ -18,9 +18,9 @@ export function Header() {
   };
 
   return (
-    <header className="border-b bg-white">
-      <div className="mx-auto w-full max-w-6xl px-3 py-3">
-        <div className="flex items-center gap-2">
+    <header className="mic-header">
+      <div className="mic-container">
+        <div className="mic-header-row">
           {/* Mobile menu */}
           <div className="lg:hidden">
             <MobileMenuDrawer />
@@ -55,10 +55,16 @@ export function Header() {
         </div>
 
         {/* Secondary row (desktop quick links) */}
-        <div className="mt-2 hidden lg:flex items-center gap-3 text-[12px] mic-muted">
-          <Link href="/" className="hover:underline">Ponude</Link>
-          <Link href="/" className="hover:underline">Najprodavanije</Link>
-          <Link href="/" className="hover:underline">Brza isporuka</Link>
+        <div className="mt-2 hidden lg:flex items-center gap-3 text-[12px] mic-muted pb-3">
+          <Link href="/" className="hover:underline">
+            Ponude
+          </Link>
+          <Link href="/" className="hover:underline">
+            Najprodavanije
+          </Link>
+          <Link href="/" className="hover:underline">
+            Brza isporuka
+          </Link>
           <span className="ml-auto mic-muted-2">MIC-like UI, brži mobile</span>
         </div>
       </div>

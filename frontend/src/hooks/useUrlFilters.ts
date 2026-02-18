@@ -15,10 +15,16 @@ export type SortKey =
   | "ocena";
 
 export type ListingFilters = {
+  // known facets
   brand?: string[];
   size?: string[];
-  color?: string[]; // canonical: backend codes (red/black/gray...)
-  material?: string[]; // canonical: backend codes (latex/leather/...)
+  color?: string[]; // canonical backend codes
+  material?: string[]; // canonical backend codes
+
+  // ✅ dynamic facets (any other facet code from URL)
+  facets?: Record<string, string[]>;
+
+  // controls
   min?: number | null;
   max?: number | null;
   sort?: SortKey;
@@ -56,17 +62,15 @@ function normKeyValue(v: string) {
 
 /**
  * -------------------------
- *  SR <-> CODE mapping
+ * SR <-> CODE mapping (URL canonical SR for known facets, EN accepted)
  * -------------------------
- * URL (SR latin) <-> canonical code (backend)
  */
-
 const COLOR_CODE_TO_SR: Record<string, string> = {
   black: "crna",
   white: "bela",
   red: "crvena",
   green: "zelena",
-  gray: "siva", // canonical
+  gray: "siva",
   blue: "plava",
   pink: "roze",
   purple: "ljubicasta",
@@ -76,7 +80,6 @@ const COLOR_CODE_TO_SR: Record<string, string> = {
   transparent: "providna",
 };
 
-// alias -> canonical (npr. grey -> gray)
 const COLOR_CODE_ALIASES: Record<string, string> = {
   grey: "gray",
 };
@@ -103,25 +106,15 @@ const MATERIAL_SR_TO_CODE: Record<string, string> = Object.fromEntries(
 
 function encodeColorToSr(codeOrSr: string): string {
   const v = normKeyValue(codeOrSr);
-
-  // već SR?
   if (COLOR_SR_TO_CODE[v]) return v;
-
-  // alias -> canonical
   const canon = COLOR_CODE_ALIASES[v] ?? v;
-
-  // code -> SR
   return COLOR_CODE_TO_SR[canon] ?? canon;
 }
 
 function decodeColorToCode(codeOrSr: string): string {
   const v0 = normKeyValue(codeOrSr);
-
-  // SR -> code
   const mapped = COLOR_SR_TO_CODE[v0];
   const v = mapped ? mapped : v0;
-
-  // alias -> canonical
   return COLOR_CODE_ALIASES[v] ?? v;
 }
 
@@ -150,6 +143,8 @@ function getFirstCompat(sp: URLSearchParams, keys: string[]): string | null {
   for (const k of keys) {
     const v = sp.get(k);
     if (v != null && String(v).trim() !== "") return String(v);
+    const v2 = sp.get(`${k}[]`);
+    if (v2 != null && String(v2).trim() !== "") return String(v2);
   }
   return null;
 }
@@ -166,15 +161,36 @@ function setArray(sp: URLSearchParams, key: string, values: string[]) {
   for (const v of uniq(values)) sp.append(key, v);
 }
 
+function isKnownFacet(code: string) {
+  return code === "brand" || code === "size" || code === "color" || code === "material";
+}
+
+function srKeyForKnown(code: string) {
+  if (code === "brand") return "brend";
+  if (code === "size") return "velicina";
+  if (code === "color") return "boja";
+  return "materijal";
+}
+
+/**
+ * ✅ used by useCategoryProducts.ts
+ */
 export function normalizeFilters(f: ListingFilters): ListingFilters {
   const out: ListingFilters = { ...f };
 
   if (out.brand) out.brand = uniq(out.brand);
   if (out.size) out.size = uniq(out.size);
-
-  // canonical codes
   if (out.color) out.color = uniq(out.color.map(decodeColorToCode));
   if (out.material) out.material = uniq(out.material.map(decodeMaterialToCode));
+
+  if (out.facets) {
+    const next: Record<string, string[]> = {};
+    for (const [k, arr] of Object.entries(out.facets)) {
+      const a = Array.isArray(arr) ? uniq(arr) : [];
+      if (a.length) next[k] = a;
+    }
+    out.facets = Object.keys(next).length ? next : undefined;
+  }
 
   if (out.page != null) out.page = Math.max(1, Math.floor(out.page));
   if (out.perPage != null) out.perPage = Math.max(1, Math.floor(out.perPage));
@@ -183,21 +199,23 @@ export function normalizeFilters(f: ListingFilters): ListingFilters {
 }
 
 function parseFiltersFromSearchParams(sp: URLSearchParams): ListingFilters {
+  // known facets: SR canonical, EN accepted
   const brand = getAllCompat(sp, ["brend", "brand"]);
   const size = getAllCompat(sp, ["velicina", "size"]);
-
   const colorRaw = getAllCompat(sp, ["boja", "color"]);
-  const color = colorRaw.map(decodeColorToCode);
-
   const materialRaw = getAllCompat(sp, ["materijal", "material"]);
+
+  const color = colorRaw.map(decodeColorToCode);
   const material = materialRaw.map(decodeMaterialToCode);
 
+  // price
   const minRaw = getFirstCompat(sp, ["cena_min", "min"]);
   const maxRaw = getFirstCompat(sp, ["cena_max", "max"]);
   const min = parseNumber(minRaw);
   const max = parseNumber(maxRaw);
 
-  const sortRaw = (getFirstCompat(sp, ["sort"]) ?? "podrazumevano").trim() as SortKey;
+  // controls
+  const sortRaw = (getFirstCompat(sp, ["sort", "sortiranje"]) ?? "podrazumevano").trim() as SortKey;
   const allowedSort: SortKey[] = [
     "podrazumevano",
     "najnovije",
@@ -220,11 +238,58 @@ function parseFiltersFromSearchParams(sp: URLSearchParams): ListingFilters {
   const perNum = parseNumber(perRaw);
   const perPage = perNum != null ? Math.max(1, Math.floor(perNum)) : 24;
 
+  // ✅ dynamic facets: anything else in query params
+  const reserved = new Set<string>([
+    // known facet keys (SR + EN)
+    "brend",
+    "brand",
+    "velicina",
+    "size",
+    "boja",
+    "color",
+    "materijal",
+    "material",
+    // price
+    "cena_min",
+    "cena_max",
+    "min",
+    "max",
+    // controls
+    "sort",
+    "sortiranje",
+    "page",
+    "strana",
+    "perPage",
+    "per_page",
+    "po_strani",
+    "view",
+    "prikaz",
+  ]);
+
+  const dynamic: Record<string, string[]> = {};
+  // URLSearchParams doesn't directly expose all keys uniquely, so iterate entries
+  for (const [k, v] of sp.entries()) {
+    const key = k.endsWith("[]") ? k.slice(0, -2) : k;
+    if (reserved.has(key)) continue;
+    if (!key) continue;
+
+    if (!dynamic[key]) dynamic[key] = [];
+    dynamic[key].push(v);
+  }
+
+  // normalize dynamic facet arrays
+  const dynamicNorm: Record<string, string[]> = {};
+  for (const [k, arr] of Object.entries(dynamic)) {
+    const u = uniq(arr);
+    if (u.length) dynamicNorm[k] = u;
+  }
+
   return normalizeFilters({
     brand: brand.length ? brand : undefined,
     size: size.length ? size : undefined,
     color: color.length ? color : undefined,
     material: material.length ? material : undefined,
+    facets: Object.keys(dynamicNorm).length ? dynamicNorm : undefined,
     min: min != null ? min : null,
     max: max != null ? max : null,
     sort,
@@ -248,18 +313,14 @@ export function useUrlFilters() {
   const pathname = usePathname();
   const searchParams = useSearchParams();
 
-  // ✅ hydration-safe: init iz Next searchParams (isto na SSR i na clientu)
   const initialSpString = searchParams.toString();
-
   const [spString, setSpString] = React.useState<string>(initialSpString);
 
-  // kada se ruta promeni (npr. odeš na drugu kategoriju), pokupi trenutni search iz URL-a
   React.useEffect(() => {
     setSpString(getLocationSearchString());
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pathname]);
 
-  // Back/Forward: popstate -> pročitaj URL i osveži state
   React.useEffect(() => {
     const onPop = () => setSpString(getLocationSearchString());
     window.addEventListener("popstate", onPop);
@@ -274,11 +335,7 @@ export function useUrlFilters() {
     (next: URLSearchParams) => {
       const qs = next.toString();
       const url = buildUrl(pathname, qs);
-
-      // pushState => Back radi korak-po-korak
       window.history.pushState({}, "", url);
-
-      // instant UI
       setSpString(qs);
     },
     [pathname]
@@ -308,6 +365,7 @@ export function useUrlFilters() {
       const sp = new URLSearchParams(spString);
       const s = (sort ?? "podrazumevano") as SortKey;
 
+      sp.delete("sortiranje");
       if (s === "podrazumevano") sp.delete("sort");
       else sp.set("sort", s);
 
@@ -350,7 +408,7 @@ export function useUrlFilters() {
   );
 
   const setPriceDraft = React.useCallback((_min: number | null, _max: number | null) => {
-    // draft je samo UI, ne ide u URL
+    // UI-only
   }, []);
 
   const setPrice = React.useCallback(
@@ -372,33 +430,57 @@ export function useUrlFilters() {
     [spString, push]
   );
 
+  /**
+   * ✅ Generic facet ops:
+   * - known facets keep SR canonical keys (brend/velicina/boja/materijal)
+   * - unknown facets use key = facet code
+   */
   const toggleMulti = React.useCallback(
-    (code: "brand" | "size" | "color" | "material", value: string) => {
+    (code: string, value: string) => {
       const sp = new URLSearchParams(spString);
 
-      const srKey = code === "brand" ? "brend" : code === "size" ? "velicina" : code === "color" ? "boja" : "materijal";
-      const enKey = code;
+      if (isKnownFacet(code)) {
+        const srKey = srKeyForKnown(code);
+        const enKey = code;
 
-      deleteKeys(sp, [enKey]);
+        deleteKeys(sp, [enKey]);
 
-      const currentUrlVals = getAllCompat(sp, [srKey]);
+        const currentUrlVals = getAllCompat(sp, [srKey]);
 
-      let currentCodes: string[] = currentUrlVals;
-      if (code === "color") currentCodes = currentUrlVals.map(decodeColorToCode);
-      if (code === "material") currentCodes = currentUrlVals.map(decodeMaterialToCode);
+        let currentCodes: string[] = currentUrlVals;
+        if (code === "color") currentCodes = currentUrlVals.map(decodeColorToCode);
+        if (code === "material") currentCodes = currentUrlVals.map(decodeMaterialToCode);
 
-      const set = new Set(currentCodes);
-      const vCode =
-        code === "color" ? decodeColorToCode(value) : code === "material" ? decodeMaterialToCode(value) : String(value);
+        const set = new Set(currentCodes);
+        const vCode =
+          code === "color" ? decodeColorToCode(value) : code === "material" ? decodeMaterialToCode(value) : String(value);
 
-      if (set.has(vCode)) set.delete(vCode);
-      else set.add(vCode);
+        if (set.has(vCode)) set.delete(vCode);
+        else set.add(vCode);
 
-      const nextCodes = Array.from(set);
+        const nextCodes = Array.from(set);
 
-      if (code === "color") setArray(sp, srKey, nextCodes.map(encodeColorToSr));
-      else if (code === "material") setArray(sp, srKey, nextCodes.map(encodeMaterialToSr));
-      else setArray(sp, srKey, nextCodes);
+        if (code === "color") setArray(sp, srKey, nextCodes.map(encodeColorToSr));
+        else if (code === "material") setArray(sp, srKey, nextCodes.map(encodeMaterialToSr));
+        else setArray(sp, srKey, nextCodes);
+
+        resetPage(sp);
+        push(sp);
+        return;
+      }
+
+      // dynamic facet (key=code)
+      const key = code;
+      const current = getAllCompat(sp, [key]);
+      const set = new Set(current);
+      const v = String(value);
+
+      if (set.has(v)) set.delete(v);
+      else set.add(v);
+
+      const next = Array.from(set);
+      if (next.length) setArray(sp, key, next);
+      else deleteKeys(sp, [key]);
 
       resetPage(sp);
       push(sp);
@@ -407,33 +489,67 @@ export function useUrlFilters() {
   );
 
   const removeMulti = React.useCallback(
-    (code: "brand" | "size" | "color" | "material", value: string) => {
+    (code: string, value: string) => {
       const sp = new URLSearchParams(spString);
 
-      const srKey = code === "brand" ? "brend" : code === "size" ? "velicina" : code === "color" ? "boja" : "materijal";
-      const enKey = code;
+      if (isKnownFacet(code)) {
+        const srKey = srKeyForKnown(code);
+        const enKey = code;
 
-      deleteKeys(sp, [enKey]);
+        deleteKeys(sp, [enKey]);
 
-      const currentUrlVals = getAllCompat(sp, [srKey]);
+        const currentUrlVals = getAllCompat(sp, [srKey]);
 
-      let currentCodes: string[] = currentUrlVals;
-      if (code === "color") currentCodes = currentUrlVals.map(decodeColorToCode);
-      if (code === "material") currentCodes = currentUrlVals.map(decodeMaterialToCode);
+        let currentCodes: string[] = currentUrlVals;
+        if (code === "color") currentCodes = currentUrlVals.map(decodeColorToCode);
+        if (code === "material") currentCodes = currentUrlVals.map(decodeMaterialToCode);
 
-      const vCode =
-        code === "color" ? decodeColorToCode(value) : code === "material" ? decodeMaterialToCode(value) : String(value);
+        const vCode =
+          code === "color" ? decodeColorToCode(value) : code === "material" ? decodeMaterialToCode(value) : String(value);
 
-      const nextCodes = currentCodes.filter((x) => x !== vCode);
+        const nextCodes = currentCodes.filter((x) => x !== vCode);
 
-      if (nextCodes.length === 0) {
-        deleteKeys(sp, [srKey]);
-      } else {
-        if (code === "color") setArray(sp, srKey, nextCodes.map(encodeColorToSr));
-        else if (code === "material") setArray(sp, srKey, nextCodes.map(encodeMaterialToSr));
-        else setArray(sp, srKey, nextCodes);
+        if (nextCodes.length === 0) {
+          deleteKeys(sp, [srKey]);
+        } else {
+          if (code === "color") setArray(sp, srKey, nextCodes.map(encodeColorToSr));
+          else if (code === "material") setArray(sp, srKey, nextCodes.map(encodeMaterialToSr));
+          else setArray(sp, srKey, nextCodes);
+        }
+
+        resetPage(sp);
+        push(sp);
+        return;
       }
 
+      const key = code;
+      const current = getAllCompat(sp, [key]);
+      const v = String(value);
+      const next = current.filter((x) => x !== v);
+
+      if (next.length) setArray(sp, key, next);
+      else deleteKeys(sp, [key]);
+
+      resetPage(sp);
+      push(sp);
+    },
+    [spString, push]
+  );
+
+  const clearMulti = React.useCallback(
+    (code: string) => {
+      const sp = new URLSearchParams(spString);
+
+      if (isKnownFacet(code)) {
+        const srKey = srKeyForKnown(code);
+        const enKey = code;
+        deleteKeys(sp, [enKey, srKey]);
+        resetPage(sp);
+        push(sp);
+        return;
+      }
+
+      deleteKeys(sp, [code]);
       resetPage(sp);
       push(sp);
     },
@@ -448,6 +564,7 @@ export function useUrlFilters() {
     filters,
     toggleMulti,
     removeMulti,
+    clearMulti,
     setPriceDraft,
     setPrice,
     setSort,
