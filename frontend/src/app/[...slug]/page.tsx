@@ -10,6 +10,7 @@ type ResolveResponse =
   | { type: "product"; slug: string; product_id?: number; category_slug_path?: string | null }
   | { type: "not_found" };
 
+const SITE_NAME = process.env.NEXT_PUBLIC_SITE_NAME?.trim() || "Shop";
 const RESOLVE_REVALIDATE_SECONDS = 3600; // 1h (safe: ne zavisi od filtera)
 
 async function apiFetchJson(path: string, opts?: { revalidateSeconds?: number; noStore?: boolean }) {
@@ -36,17 +37,39 @@ async function resolvePath(slugPath: string): Promise<ResolveResponse | null> {
   return apiFetchJson(`/api/resolve?path=${q}`, { revalidateSeconds: RESOLVE_REVALIDATE_SECONDS });
 }
 
+function safeDecodeSegment(s: string) {
+  try {
+    return decodeURIComponent(s);
+  } catch {
+    return s;
+  }
+}
+
+function canonicalPathFor(slugPath: string) {
+  const clean = (slugPath ?? "").trim().replace(/^\/+|\/+$/g, "");
+  if (!clean) return "/";
+  // encodeURI ostavlja "/" ali enkoduje razmake i sl. u segmentima
+  return `/${encodeURI(clean)}`;
+}
+
 // ✅ Najbrže: bez backend poziva u metadata (da filter klik ne “ubija” UX)
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const { slug } = await params;
   const parts = slug ?? [];
   const slugPath = parts.join("/");
 
-  if (!slugPath) return { title: "Shop" };
+  if (!slugPath) {
+    // Pusti root layout da odluči default title (da ne dobiješ "Shop | Shop")
+    return {};
+  }
 
-  // minimalno, bez fetch
-  const last = parts.at(-1) ?? "Shop";
-  return { title: `${decodeURIComponent(last)} | Shop` };
+  const last = safeDecodeSegment(parts.at(-1) ?? "");
+  const title = last || SITE_NAME;
+
+  return {
+    title, // layout template će dodati `| SITE_NAME`
+    alternates: { canonical: canonicalPathFor(slugPath) },
+  };
 }
 
 export default async function CatchAllPage({ params }: Props) {

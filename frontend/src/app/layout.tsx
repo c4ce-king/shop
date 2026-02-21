@@ -3,9 +3,14 @@ import "./globals.css";
 import Providers from "./providers";
 import HeaderClient from "./header-client";
 
+const SITE_NAME = process.env.NEXT_PUBLIC_SITE_NAME?.trim() || "Shop";
+
 export const metadata: Metadata = {
-  title: "Shop",
-  description: "Shop",
+  title: {
+    default: SITE_NAME,
+    template: `%s | ${SITE_NAME}`,
+  },
+  description: SITE_NAME,
 };
 
 /**
@@ -21,7 +26,6 @@ export const viewport: Viewport = {
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
-  // Server-only: bez hydration problema (footer je van Providers)
   const year = new Date().getFullYear();
 
   return (
@@ -29,15 +33,12 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       <body className="mic-page">
         <Providers>
           <HeaderClient />
-
-          {/* Centralni sadržaj (širi) — ne diramo header/footer širinu */}
           <main className="mic-container-main py-4">{children}</main>
         </Providers>
 
-        {/* Footer OUTSIDE Providers => server-render only => nema hydration mismatch */}
         <footer className="mt-10 border-t bg-white/80 backdrop-blur">
           <div className="mic-container py-6 text-[12px] mic-muted">
-            © {year} Shop — B2C / B2B
+            © {year} {SITE_NAME} — B2C / B2B
           </div>
         </footer>
       </body>
