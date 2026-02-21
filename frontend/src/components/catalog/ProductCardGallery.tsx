@@ -2,14 +2,12 @@
 
 import * as React from "react";
 import Link from "next/link";
-import { ChevronLeft, ChevronRight } from "lucide-react";
+import { ChevronLeft, ChevronRight, ShoppingCart } from "lucide-react";
+
 import type { ProductListingItem, ProductImageDTO } from "@/hooks/useCategoryProducts";
+import { buildProductTitle } from "@/lib/site";
 
-function formatRSD(n: number) {
-  return new Intl.NumberFormat("sr-RS").format(Math.round(n)) + " RSD";
-}
-
-function cx(...classes: Array<string | undefined | false | null>) {
+function cx(...classes: Array<string | false | null | undefined>) {
   return classes.filter(Boolean).join(" ");
 }
 
@@ -46,75 +44,66 @@ function safeSlugPath(slugPath: string) {
 }
 
 function addToCart(p: ProductListingItem) {
+  // TODO: wire to real cart
   console.log("[cart] add", p.id, p.name);
 }
 
-/**
- * NOTE: "Upit" (B2B inquiry) je privremeno uklonjen po zahtevu.
- * Kad krene B2B gating / lead flow, vraćamo handler + dugme.
- */
-// function sendInquiry(p: ProductListingItem) {
-//   console.log("[inquiry] open", p.id, p.name);
-// }
-
-export function ProductCardGallery({ slugPath, p }: { slugPath: string; p: ProductListingItem }) {
+export function ProductCardGallery({
+  slugPath,
+  categoryName,
+  p,
+}: {
+  slugPath: string;
+  categoryName?: string | null;
+  p: ProductListingItem;
+}) {
   const basePath = safeSlugPath(slugPath);
   const href = basePath ? `/${basePath}/${p.slug}` : `/${p.slug}`;
 
+  const categoryLabel = (categoryName ?? "Katalog").trim() || "Katalog";
+  const seoTitle = buildProductTitle(categoryLabel, p.name);
+
   const gallery = React.useMemo(() => getGallery(p), [p]);
-  const [hover, setHover] = React.useState(false);
   const [active, setActive] = React.useState(0);
 
-  React.useEffect(() => {
-    setActive(0);
-    setHover(false);
-  }, [p.id]);
+  React.useEffect(() => setActive(0), [p.id]);
 
   const activeSrc = gallery[active]?.main ?? gallery[0]?.main ?? p.image_grid_url ?? null;
 
   const isSale = !!p.is_sale;
-  const hasPricing = typeof p.price_rsd === "number" && p.price_rsd > 0;
-  const oldPrice = typeof p.old_price_rsd === "number" ? p.old_price_rsd : null;
-
   const canPrev = active > 0;
   const canNext = active < gallery.length - 1;
 
-  const titleAdd = `Dodaj "${p.name}" u korpu`;
-  const titleMore = `Opsirnije o "${p.name}"`;
+  const cartTitle = p.name ? `Dodaj u korpu: ${p.name}` : "Dodaj u korpu";
 
   return (
-    <div
-      className="group mic-card-dense mic-card-hover p-2"
-      onMouseEnter={() => setHover(true)}
-      onMouseLeave={() => {
-        setHover(false);
-        setActive(0);
-      }}
-    >
-      <Link href={href} title={p.name} className="block">
-        <div className="relative aspect-square w-full overflow-hidden rounded-md bg-black/5">
+    // ✅ h-full + flex-col => grid može da izjednači visine
+    <div className="mic-product-card group mic-card mic-card-hover relative overflow-hidden h-full flex flex-col">
+      {/* Media (fiksna visina preko aspect ratio) */}
+      <Link href={href} title={seoTitle} className="block">
+        <div className="relative aspect-[4/3] w-full overflow-hidden bg-neutral-50">
           {activeSrc ? (
             // eslint-disable-next-line @next/next/no-img-element
             <img
               src={activeSrc}
               alt={p.name}
-              className="h-full w-full object-cover transition-transform duration-200 group-hover:scale-[1.03]"
+              title={seoTitle}
+              className="h-full w-full object-cover object-center transition-transform duration-300 group-hover:scale-[1.04]"
               loading="lazy"
             />
           ) : (
-            <div className="flex h-full items-center justify-center text-[12px] text-black/50">Nema slike</div>
+            <div className="flex h-full w-full items-center justify-center text-sm mic-muted">
+              Nema slike
+            </div>
           )}
 
-          <div className="absolute left-2 top-2 flex flex-wrap gap-1.5">
-            {isSale ? <span className="mic-badge bg-red-50 text-red-700 border-red-100">Akcija</span> : null}
+          {isSale ? (
+            <div className="absolute left-2 top-2 rounded-full bg-black px-2 py-1 text-xs font-semibold text-white">
+              Akcija
+            </div>
+          ) : null}
 
-            {/* NOTE: Uklonjeno po zahtevu (previše šuma). Vraćamo kasnije uz B2B gating:
-                <span className="mic-badge">B2B</span>
-                {hasPricing ? <span className="mic-badge">Cena</span> : <span className="mic-badge">Na upit</span>}
-             */}
-          </div>
-
-          {hover && gallery.length > 1 ? (
+          {gallery.length > 1 ? (
             <>
               <button
                 type="button"
@@ -125,11 +114,12 @@ export function ProductCardGallery({ slugPath, p }: { slugPath: string; p: Produ
                   setActive((x) => Math.max(0, x - 1));
                 }}
                 className={cx(
-                  "absolute left-1 top-1/2 -translate-y-1/2 rounded-full bg-white/90 p-1 shadow",
-                  "disabled:opacity-50"
+                  "absolute left-2 top-1/2 -translate-y-1/2 rounded-full bg-white/95 p-1 shadow",
+                  "opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity",
+                  "disabled:opacity-40"
                 )}
                 aria-label="Prethodna slika"
-                title="Prethodna"
+                title="Prethodna slika"
               >
                 <ChevronLeft className="h-4 w-4" />
               </button>
@@ -143,83 +133,73 @@ export function ProductCardGallery({ slugPath, p }: { slugPath: string; p: Produ
                   setActive((x) => Math.min(gallery.length - 1, x + 1));
                 }}
                 className={cx(
-                  "absolute right-1 top-1/2 -translate-y-1/2 rounded-full bg-white/90 p-1 shadow",
-                  "disabled:opacity-50"
+                  "absolute right-2 top-1/2 -translate-y-1/2 rounded-full bg-white/95 p-1 shadow",
+                  "opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity",
+                  "disabled:opacity-40"
                 )}
                 aria-label="Sledeća slika"
-                title="Sledeća"
+                title="Sledeća slika"
               >
                 <ChevronRight className="h-4 w-4" />
               </button>
-            </>
-          ) : null}
 
-          {gallery.length > 1 ? (
-            <div className="absolute bottom-2 left-1/2 flex -translate-x-1/2 items-center gap-1 rounded-full bg-white/80 px-2 py-1 backdrop-blur">
-              {gallery.map((g, i) => (
-                <button
-                  key={g.thumb + i}
-                  type="button"
-                  aria-label={`Slika ${i + 1}`}
-                  title={`Slika ${i + 1}`}
-                  className={cx("h-1 w-1 rounded-full", i === active ? "bg-black" : "bg-black/25 hover:bg-black/40")}
-                  onClick={(e) => {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    setActive(i);
-                  }}
-                />
-              ))}
-            </div>
+              <div className="absolute bottom-2 left-0 right-0 flex items-center justify-center gap-1.5 px-2">
+                {gallery.map((g, i) => (
+                  <button
+                    key={`${g.thumb}-${i}`}
+                    type="button"
+                    onClick={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      setActive(i);
+                    }}
+                    className={cx(
+                      "h-1.5 w-1.5 rounded-full transition",
+                      i === active ? "bg-black" : "bg-black/30 hover:bg-black/60"
+                    )}
+                    aria-label={`Slika ${i + 1}`}
+                    title={`Slika ${i + 1}`}
+                  />
+                ))}
+              </div>
+            </>
           ) : null}
         </div>
       </Link>
 
-      <div className="mt-2">
-        <Link href={href} title={p.name} className="block">
-          <div className="line-clamp-2 text-[13px] font-semibold leading-4">{p.name}</div>
+      {/* ✅ Content: flex-1 + mt-auto na CTA => dugme uvek na dnu */}
+      <div className="flex flex-1 flex-col gap-2.5 p-3">
+        <Link href={href} title={seoTitle} className="block">
+          {/* ✅ rezerviši visinu naslova (2 linije) da kartice ne “plešu” */}
+          <div className="min-h-[40px] line-clamp-2 text-sm font-semibold leading-snug text-neutral-900 hover:underline">
+            {p.name}
+          </div>
         </Link>
 
-        <div className="mt-1 flex items-baseline gap-2">
-          {hasPricing ? (
-            <div className="text-[13px] font-bold">{formatRSD(p.price_rsd)}</div>
-          ) : (
-            <div className="text-[12px] font-semibold">Na upit</div>
-          )}
+        {/* NOTE: Uklonjeno po zahtevu (B2B/cena na karticama).
+            Vraćamo kasnije uz B2B gating / pricing prikaz.
+        */}
 
-          {isSale && typeof oldPrice === "number" ? (
-            <div className="text-[11px] text-black/50 line-through">{formatRSD(oldPrice)}</div>
-          ) : null}
-        </div>
-
-        <div className="mt-2 flex items-center gap-2">
-          <button
-            type="button"
-            className="mic-btn-primary h-8 flex-1"
-            onClick={() => addToCart(p)}
-            title={titleAdd}
-            aria-label={titleAdd}
-          >
-            Dodaj
-          </button>
-
-          <Link href={href} className="mic-btn h-8 flex-1" title={titleMore} aria-label={titleMore}>
-            Opsirnije
-          </Link>
-
-          {/* NOTE: Uklonjeno po zahtevu:
-              <button type="button" className="mic-btn-solid h-8 flex-1" onClick={() => sendInquiry(p)}>Upit</button>
-           */}
-        </div>
-
-        <div className="mt-2 grid grid-cols-2 gap-x-3 gap-y-1 text-[11px] text-black/70">
-          <div className="truncate">
-            <span className="text-black/45">Stanje:</span> Novo
-          </div>
-          <div className="truncate">
-            <span className="text-black/45">Isporuka:</span> 2–5 dana
+        {/* ✅ i ovaj blok ima stabilan footprint */}
+        <div className="grid gap-1 text-xs mic-muted">
+          <div className="min-h-[16px]" title="Rok isporuke">
+            Isporuka: 2–5 dana
           </div>
         </div>
+
+        {/* ✅ CTA uvek na dnu kartice */}
+        <button
+          type="button"
+          onClick={() => addToCart(p)}
+          className="mic-btn-primary w-full mt-auto"
+          aria-label="Dodaj u korpu"
+          title={cartTitle}
+        >
+          <span className="inline-flex items-center justify-center gap-2">
+            <ShoppingCart className="h-4 w-4" />
+            Dodaj u korpu
+          </span>
+        </button>
       </div>
     </div>
   );

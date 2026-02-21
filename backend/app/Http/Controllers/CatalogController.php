@@ -58,13 +58,37 @@ class CatalogController extends Controller
 
         // Branch (descendants)
         $descendantIds = [];
+
+        // 1) Primary: category_closure (if present)
         if (Schema::hasTable('category_closure')) {
             $descendantIds = DB::table('category_closure')
                 ->where('ancestor_id', $category->id)
                 ->pluck('descendant_id')
                 ->all();
         }
-        if (empty($descendantIds)) $descendantIds = [$category->id];
+
+        // ✅ IMPORTANT: always include self (some closure tables don't include self rows)
+        $descendantIds = array_values(array_unique(array_merge([(int)$category->id], array_map('intval', $descendantIds))));
+
+        // 2) Fallback: slug_path prefix (if closure missing / incomplete)
+        // If closure exists but is not populated properly, we still want the full branch.
+        // We only do this when we don't see any real expansion beyond self.
+        if (count($descendantIds) <= 1) {
+            $prefix = rtrim((string)$category->slug_path, '/');
+            if ($prefix !== '') {
+                $like = $prefix . '/%';
+                $more = DB::table('categories')
+                    ->where('is_active', 1)
+                    ->where('slug_path', 'like', $like)
+                    ->pluck('id')
+                    ->all();
+
+                $descendantIds = array_values(array_unique(array_merge($descendantIds, array_map('intval', $more))));
+            }
+        }
+
+        // If still empty for any reason, fallback to self
+        if (empty($descendantIds)) $descendantIds = [(int)$category->id];
 
         // Base query: products in branch
         $base = DB::table('products')
@@ -329,6 +353,9 @@ class CatalogController extends Controller
             ];
         }
 
+        // ✅ Optional debug (only when requested)
+        $debug = (string)$request->query('debug', '') === '1';
+
         return response()->json([
             'category' => [
                 'id' => $category->id,
@@ -345,6 +372,12 @@ class CatalogController extends Controller
                 'per_page' => $perPage,
                 'total' => $total,
             ],
+            'debug' => $debug ? [
+                'slug_path' => (string)$slug_path,
+                'category_id' => (int)$category->id,
+                'descendant_ids_count' => count($descendantIds),
+                'descendant_ids_sample' => array_slice($descendantIds, 0, 20),
+            ] : null,
         ]);
     }
 
@@ -365,7 +398,7 @@ class CatalogController extends Controller
         $imagesByProduct = $this->fetchImagesForProducts([(int)$p->id], 30);
         $imgs = $imagesByProduct[(int)$p->id] ?? [];
 
-        // (MVP) category slug_path za breadcrumbs: uzmi jednu kategoriju (najplića ili prva)
+        // (MVP) category slug_path za breadcrumbs: uzmi jednu kategoriju (najpliÄ‡a ili prva)
         $categorySlugPath = null;
         if (Schema::hasTable('category_product') && Schema::hasTable('categories')) {
             $categorySlugPath = DB::table('category_product as cp')
@@ -384,7 +417,7 @@ class CatalogController extends Controller
             'category_slug_path' => $categorySlugPath,
             'images' => $imgs,
             'meta' => [
-                'seo_title' => null, // FE može da setuje: "{name} – {price} | Shop"
+                'seo_title' => null, // FE moÅ¾e da setuje: "{name} â€“ {price} | Shop"
             ],
         ]);
     }
@@ -407,13 +440,13 @@ class CatalogController extends Controller
             ], 200);
         }
 
-        // 2) Inače tretiraj poslednji segment kao product slug (MVP)
+        // 2) InaÄe tretiraj poslednji segment kao product slug (MVP)
         $parts = explode('/', $path);
         $last = trim((string)end($parts));
         if ($last !== '' && Schema::hasColumn('products', 'slug')) {
             $prod = DB::table('products')->where('slug', $last)->first(['id', 'slug']);
             if ($prod) {
-                // pokuša da nađe category slug_path kao prefix (ako postoji)
+                // pokuÅ¡a da naÄ‘e category slug_path kao prefix (ako postoji)
                 $prefix = implode('/', array_slice($parts, 0, -1));
                 $prefixCat = null;
                 if ($prefix !== '') {

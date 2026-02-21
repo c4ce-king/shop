@@ -264,10 +264,12 @@ function parseFiltersFromSearchParams(sp: URLSearchParams): ListingFilters {
     "po_strani",
     "view",
     "prikaz",
+    // ✅ debug keys reserved (da nikad ne postanu facet)
+    "debug_pages",
+    "debug_pagecount",
   ]);
 
   const dynamic: Record<string, string[]> = {};
-  // URLSearchParams doesn't directly expose all keys uniquely, so iterate entries
   for (const [k, v] of sp.entries()) {
     const key = k.endsWith("[]") ? k.slice(0, -2) : k;
     if (reserved.has(key)) continue;
@@ -277,7 +279,6 @@ function parseFiltersFromSearchParams(sp: URLSearchParams): ListingFilters {
     dynamic[key].push(v);
   }
 
-  // normalize dynamic facet arrays
   const dynamicNorm: Record<string, string[]> = {};
   for (const [k, arr] of Object.entries(dynamic)) {
     const u = uniq(arr);
@@ -430,11 +431,6 @@ export function useUrlFilters() {
     [spString, push]
   );
 
-  /**
-   * ✅ Generic facet ops:
-   * - known facets keep SR canonical keys (brend/velicina/boja/materijal)
-   * - unknown facets use key = facet code
-   */
   const toggleMulti = React.useCallback(
     (code: string, value: string) => {
       const sp = new URLSearchParams(spString);
@@ -453,7 +449,11 @@ export function useUrlFilters() {
 
         const set = new Set(currentCodes);
         const vCode =
-          code === "color" ? decodeColorToCode(value) : code === "material" ? decodeMaterialToCode(value) : String(value);
+          code === "color"
+            ? decodeColorToCode(value)
+            : code === "material"
+            ? decodeMaterialToCode(value)
+            : String(value);
 
         if (set.has(vCode)) set.delete(vCode);
         else set.add(vCode);
@@ -469,7 +469,6 @@ export function useUrlFilters() {
         return;
       }
 
-      // dynamic facet (key=code)
       const key = code;
       const current = getAllCompat(sp, [key]);
       const set = new Set(current);
@@ -505,7 +504,11 @@ export function useUrlFilters() {
         if (code === "material") currentCodes = currentUrlVals.map(decodeMaterialToCode);
 
         const vCode =
-          code === "color" ? decodeColorToCode(value) : code === "material" ? decodeMaterialToCode(value) : String(value);
+          code === "color"
+            ? decodeColorToCode(value)
+            : code === "material"
+            ? decodeMaterialToCode(value)
+            : String(value);
 
         const nextCodes = currentCodes.filter((x) => x !== vCode);
 

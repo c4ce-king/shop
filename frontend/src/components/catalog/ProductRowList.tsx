@@ -2,11 +2,13 @@
 
 import * as React from "react";
 import Link from "next/link";
-import { ChevronLeft, ChevronRight } from "lucide-react";
-import type { ProductListingItem, ProductImageDTO } from "@/hooks/useCategoryProducts";
+import { ChevronLeft, ChevronRight, ShoppingCart } from "lucide-react";
 
-function formatRSD(n: number) {
-  return new Intl.NumberFormat("sr-RS").format(Math.round(n)) + " RSD";
+import type { ProductListingItem, ProductImageDTO } from "@/hooks/useCategoryProducts";
+import { buildProductTitle } from "@/lib/site";
+
+function cx(...classes: Array<string | false | null | undefined>) {
+  return classes.filter(Boolean).join(" ");
 }
 
 function pickUrl(im: ProductImageDTO | undefined | null): string | null {
@@ -40,20 +42,24 @@ function safeSlugPath(slugPath: string) {
 }
 
 function addToCart(p: ProductListingItem) {
+  // TODO: wire to real cart
   console.log("[cart] add", p.id, p.name);
 }
 
-/**
- * NOTE: "Upit" (B2B inquiry) je privremeno uklonjen po zahtevu.
- * Kad krene B2B gating / lead flow, vraćamo handler + dugme.
- */
-// function sendInquiry(p: ProductListingItem) {
-//   console.log("[inquiry] open", p.id, p.name);
-// }
-
-export function ProductRowList({ slugPath, p }: { slugPath: string; p: ProductListingItem }) {
+export function ProductRowList({
+  slugPath,
+  categoryName,
+  p,
+}: {
+  slugPath: string;
+  categoryName?: string | null;
+  p: ProductListingItem;
+}) {
   const basePath = safeSlugPath(slugPath);
   const href = basePath ? `/${basePath}/${p.slug}` : `/${p.slug}`;
+
+  const categoryLabel = (categoryName ?? "Katalog").trim() || "Katalog";
+  const seoTitle = buildProductTitle(categoryLabel, p.name);
 
   const imgs = React.useMemo(() => getImages(p), [p]);
   const [idx, setIdx] = React.useState(0);
@@ -65,108 +71,115 @@ export function ProductRowList({ slugPath, p }: { slugPath: string; p: ProductLi
   const canNext = idx < imgs.length - 1;
 
   const isSale = !!p.is_sale;
-  const oldPrice = typeof p.old_price_rsd === "number" ? p.old_price_rsd : null;
-
-  const titleAdd = `Dodaj "${p.name}" u korpu`;
-  const titleMore = `Opsirnije o "${p.name}"`;
+  const cartTitle = p.name ? `Dodaj u korpu: ${p.name}` : "Dodaj u korpu";
 
   return (
-    <div className="mic-card-dense mic-card-hover p-2">
-      <div className="flex gap-3">
-        <div className="relative h-28 w-28 shrink-0 overflow-hidden rounded-md bg-black/5">
-          {activeSrc ? (
-            <Link href={href} title={p.name} className="block h-full w-full">
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src={activeSrc} alt={p.name} className="h-full w-full object-cover" loading="lazy" />
-            </Link>
-          ) : (
-            <div className="flex h-full items-center justify-center text-[12px] text-black/50">Nema</div>
-          )}
+    <div className="mic-product-card group mic-card mic-card-hover relative p-3">
+      <div className="grid grid-cols-[104px_1fr] gap-3 sm:grid-cols-[132px_1fr]">
+        {/* Media */}
+        <Link href={href} title={seoTitle} className="block">
+          <div className="relative aspect-square overflow-hidden rounded-md bg-neutral-50">
+            {activeSrc ? (
+              <>
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={activeSrc}
+                  alt={p.name}
+                  title={seoTitle}
+                  className="h-full w-full object-cover object-center transition-transform duration-300 group-hover:scale-[1.04]"
+                  loading="lazy"
+                />
 
-          {imgs.length > 1 ? (
-            <>
-              <button
-                type="button"
-                disabled={!canPrev}
-                onClick={() => setIdx((x) => Math.max(0, x - 1))}
-                className="absolute left-1 top-1/2 -translate-y-1/2 rounded-full bg-white/90 p-1 shadow disabled:opacity-50"
-                aria-label="Prethodna slika"
-                title="Prethodna"
-              >
-                <ChevronLeft className="h-4 w-4" />
-              </button>
+                {/* subtle hover overlay */}
+                <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/12 via-black/0 to-black/0 opacity-0 transition-opacity duration-200 group-hover:opacity-100" />
 
-              <button
-                type="button"
-                disabled={!canNext}
-                onClick={() => setIdx((x) => Math.min(imgs.length - 1, x + 1))}
-                className="absolute right-1 top-1/2 -translate-y-1/2 rounded-full bg-white/90 p-1 shadow disabled:opacity-50"
-                aria-label="Sledeća slika"
-                title="Sledeća"
-              >
-                <ChevronRight className="h-4 w-4" />
-              </button>
-            </>
-          ) : null}
-        </div>
+                {isSale ? (
+                  <div className="absolute left-2 top-2 rounded-full bg-black px-2 py-1 text-[11px] font-semibold text-white">
+                    Akcija
+                  </div>
+                ) : null}
+              </>
+            ) : (
+              <div className="flex h-full w-full items-center justify-center text-xs mic-muted">
+                Nema
+              </div>
+            )}
 
-        <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-center gap-2">
-            <Link href={href} title={p.name} className="min-w-0">
-              <div className="line-clamp-2 text-[13px] font-semibold leading-4">{p.name}</div>
-            </Link>
+            {imgs.length > 1 ? (
+              <>
+                <button
+                  type="button"
+                  disabled={!canPrev}
+                  onClick={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    setIdx((x) => Math.max(0, x - 1));
+                  }}
+                  className={cx(
+                    "absolute left-1 top-1/2 -translate-y-1/2 rounded-full bg-white/95 p-1 shadow",
+                    "opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity",
+                    "disabled:opacity-40"
+                  )}
+                  aria-label="Prethodna slika"
+                  title="Prethodna slika"
+                >
+                  <ChevronLeft className="h-4 w-4" />
+                </button>
 
-            {isSale ? <span className="mic-badge bg-red-50 text-red-700 border-red-100">Akcija</span> : null}
-
-            {/* NOTE: Uklonjeno po zahtevu:
-                <span className="mic-badge">B2B</span>
-             */}
-          </div>
-
-          <div className="mt-1 flex items-baseline gap-2">
-            <div className="text-[13px] font-bold">{formatRSD(p.price_rsd)}</div>
-            {isSale && typeof oldPrice === "number" ? (
-              <div className="text-[11px] text-black/50 line-through">{formatRSD(oldPrice)}</div>
+                <button
+                  type="button"
+                  disabled={!canNext}
+                  onClick={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    setIdx((x) => Math.min(imgs.length - 1, x + 1));
+                  }}
+                  className={cx(
+                    "absolute right-1 top-1/2 -translate-y-1/2 rounded-full bg-white/95 p-1 shadow",
+                    "opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity",
+                    "disabled:opacity-40"
+                  )}
+                  aria-label="Sledeća slika"
+                  title="Sledeća slika"
+                >
+                  <ChevronRight className="h-4 w-4" />
+                </button>
+              </>
             ) : null}
           </div>
+        </Link>
 
-          <div className="mt-2 grid grid-cols-2 gap-x-3 gap-y-1 text-[12px] text-black/70 md:grid-cols-3">
-            <div className="truncate">
-              <span className="text-black/45">Stanje:</span> Novo
+        {/* Content */}
+        <div className="flex min-w-0 flex-col gap-2">
+          <Link href={href} title={seoTitle} className="block">
+            <div className="min-h-[40px] line-clamp-2 text-sm font-semibold leading-snug text-neutral-900 hover:underline">
+              {p.name}
             </div>
-            <div className="truncate">
-              <span className="text-black/45">Isporuka:</span> 2–5 dana
-            </div>
-            <div className="truncate">
-              <span className="text-black/45">MOQ:</span> Kontakt
-            </div>
+          </Link>
+
+          {/* NOTE: Uklonjeno po zahtevu (B2B/cena na listing karticama).
+              Vraćamo kasnije uz B2B gating / pricing prikaz.
+          */}
+
+          <div className="grid gap-1 text-xs mic-muted">
+            <div title="Rok isporuke">Isporuka: 2–5 dana</div>
+            <div title="Minimalna količina">MOQ: Kontakt</div>
           </div>
-        </div>
 
-        <div className="flex shrink-0 flex-col items-end justify-between gap-2">
-          <div className="text-right">
-            <div className="text-[11px] text-black/45">Brza akcija</div>
-            <div className="text-[12px] font-semibold">Dostupno</div>
-          </div>
-
-          <div className="flex flex-col gap-1.5">
+          {/* CTA: kompaktan + dno kolone */}
+          <div className="mt-auto flex items-center justify-end">
             <button
               type="button"
-              className="mic-btn-primary h-8 w-28"
               onClick={() => addToCart(p)}
-              title={titleAdd}
-              aria-label={titleAdd}
+              className="mic-btn-primary"
+              aria-label="Dodaj u korpu"
+              title={cartTitle}
             >
-              Dodaj
+              <span className="inline-flex items-center justify-center gap-2">
+                <ShoppingCart className="h-4 w-4" />
+                Dodaj u korpu
+              </span>
             </button>
-
-            <Link href={href} className="mic-btn h-8 w-28 text-center" title={titleMore} aria-label={titleMore}>
-              Opsirnije
-            </Link>
-
-            {/* NOTE: Uklonjeno po zahtevu:
-                <button type="button" className="mic-btn-solid h-8 w-28" onClick={() => sendInquiry(p)}>Upit</button>
-             */}
           </div>
         </div>
       </div>

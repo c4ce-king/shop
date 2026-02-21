@@ -26,17 +26,17 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
 
   return (
     <html lang="sr">
-      <body className="bg-[#fafafa] text-black">
+      <body className="mic-page">
         <Providers>
           <HeaderClient />
-          {/* main wrapper ostaje ovde - ako ti neke stranice već imaju svoj container,
-              lako ćemo kasnije prebaciti na "plain" */}
-          <main className="mx-auto max-w-6xl px-3 py-4">{children}</main>
+
+          {/* Centralni sadržaj (širi) — ne diramo header/footer širinu */}
+          <main className="mic-container-main py-4">{children}</main>
         </Providers>
 
         {/* Footer OUTSIDE Providers => server-render only => nema hydration mismatch */}
-        <footer className="mt-10 border-t bg-white">
-          <div className="mx-auto max-w-6xl px-3 py-6 text-xs mic-muted">
+        <footer className="mt-10 border-t bg-white/80 backdrop-blur">
+          <div className="mic-container py-6 text-[12px] mic-muted">
             © {year} Shop — B2C / B2B
           </div>
         </footer>

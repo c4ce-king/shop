@@ -60,12 +60,23 @@ function stableArray(xs: unknown): string[] {
 function stableFilters(filters: ListingFilters): ListingFilters {
   const f = normalizeFilters(filters);
 
+  const dynamic = (f as any).facets && typeof (f as any).facets === "object" ? (f as any).facets : undefined;
+  const stableDynamic: Record<string, string[]> | undefined = dynamic
+    ? Object.fromEntries(
+        Object.entries(dynamic)
+          .map(([k, arr]) => [String(k), stableArray(arr)])
+          .filter(([k, arr]) => k.trim() !== "" && Array.isArray(arr) && arr.length > 0)
+          .sort(([a], [b]) => a.localeCompare(b))
+      )
+    : undefined;
+
   return {
     ...f,
     brand: stableArray((f as any).brand),
     size: stableArray((f as any).size),
     color: stableArray((f as any).color),
     material: stableArray((f as any).material),
+    facets: stableDynamic,
   } as ListingFilters;
 }
 
@@ -73,17 +84,32 @@ function toBackendParams(filters: ListingFilters): URLSearchParams {
   const f = stableFilters(filters);
   const sp = new URLSearchParams();
 
+  // known facets
   for (const v of (f as any).brand ?? []) sp.append("brand", v);
   for (const v of (f as any).size ?? []) sp.append("size", v);
   for (const v of (f as any).color ?? []) sp.append("color", v);
   for (const v of (f as any).material ?? []) sp.append("material", v);
 
+  // dynamic facets -> key = facet code
+  const dyn = (f as any).facets as Record<string, string[]> | undefined;
+  if (dyn) {
+    for (const [code, arr] of Object.entries(dyn)) {
+      for (const v of arr ?? []) sp.append(code, v);
+    }
+  }
+
+  // price
   if ((f as any).min != null) sp.set("min", String(Math.round((f as any).min)));
   if ((f as any).max != null) sp.set("max", String(Math.round((f as any).max)));
 
+  // sort
   if ((f as any).sort && (f as any).sort !== "podrazumevano") sp.set("sort", (f as any).sort);
-  if ((f as any).page && (f as any).page > 1) sp.set("page", String((f as any).page));
-  if ((f as any).perPage && (f as any).perPage !== 24) sp.set("per_page", String((f as any).perPage));
+
+  // ✅ pagination: šalji UVEK (backend default ne sme da nas “prevari”)
+  const page = Math.max(1, Math.floor(Number((f as any).page ?? 1)));
+  const per = Math.max(1, Math.floor(Number((f as any).perPage ?? 24)));
+  sp.set("page", String(page));
+  sp.set("per_page", String(per));
 
   return sp;
 }
@@ -95,7 +121,6 @@ export function categoryProductsUrl(slugPath: string, filters: ListingFilters) {
 }
 
 export function categoryProductsQueryKey(slugPath: string, filters: ListingFilters) {
-  // ✅ key baziran na stabilnom URL-u
   const url = categoryProductsUrl(slugPath, filters);
   return ["catProducts", slugPath, url] as const;
 }
@@ -226,7 +251,7 @@ export function useCategoryProducts(slugPath: string, filters: ListingFilters) {
     refetchOnWindowFocus: false,
     retry: 0,
 
-    // ✅ NAJBITNIJE: nema "blink" na promenu filtera
+    // ✅ nema blink
     placeholderData: (prev) => prev,
   });
 }

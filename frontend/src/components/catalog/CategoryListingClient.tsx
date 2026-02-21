@@ -10,6 +10,7 @@ import { ProductCardGallery } from "@/components/catalog/ProductCardGallery";
 import { ProductRowList } from "@/components/catalog/ProductRowList";
 import { FacetBlock } from "@/components/catalog/FacetBlock";
 import { MobileFiltersDrawer } from "@/components/catalog/MobileFiltersDrawer";
+import { MicSelect, type MicSelectOption } from "@/components/ui/MicSelect";
 
 type Props = { slugPath: string };
 
@@ -73,6 +74,8 @@ function ViewToggle({ value, onChange }: { value: ViewMode; onChange: (v: ViewMo
   const isGrid = value === "galerija";
   const isList = value === "lista";
 
+  const baseBtn = "inline-flex items-center justify-center px-2.5 py-1.5 text-[12px] transition border";
+
   return (
     <div className="inline-flex rounded-md bg-black/[0.03] p-1">
       <div className="flex items-center gap-2">
@@ -80,38 +83,65 @@ function ViewToggle({ value, onChange }: { value: ViewMode; onChange: (v: ViewMo
           type="button"
           onClick={() => onChange("galerija")}
           className={[
-            "inline-flex items-center gap-2 px-2.5 py-1.5 text-[12px] transition",
-            "border",
+            baseBtn,
             isGrid
               ? "rounded-[6px] bg-black text-white border-transparent"
               : "rounded-md bg-white text-black/80 border-[rgb(var(--border))] hover:bg-black/5",
           ].join(" ")}
           aria-pressed={isGrid}
-          title="Grid prikaz"
+          aria-label="Prikaz proizvoda u mreži"
+          title="Prikaz proizvoda: Mreža"
         >
           <LayoutGrid className="h-4 w-4" />
-          Grid
         </button>
 
         <button
           type="button"
           onClick={() => onChange("lista")}
           className={[
-            "inline-flex items-center gap-2 px-2.5 py-1.5 text-[12px] transition",
-            "border",
+            baseBtn,
             isList
               ? "rounded-[6px] bg-black text-white border-transparent"
               : "rounded-md bg-white text-black/80 border-[rgb(var(--border))] hover:bg-black/5",
           ].join(" ")}
           aria-pressed={isList}
-          title="List prikaz"
+          aria-label="Prikaz proizvoda u listi"
+          title="Prikaz proizvoda: Lista"
         >
           <List className="h-4 w-4" />
-          List
         </button>
       </div>
     </div>
   );
+}
+
+/* -------------------------
+   Pagination helpers
+   ------------------------- */
+type PageItem = number | "…";
+
+function buildPagination(current: number, total: number): PageItem[] {
+  if (total <= 1) return [1];
+
+  const window = 2;
+  const pages = new Set<number>();
+  pages.add(1);
+  pages.add(total);
+
+  for (let p = current - window; p <= current + window; p++) {
+    if (p >= 1 && p <= total) pages.add(p);
+  }
+
+  const sorted = Array.from(pages).sort((a, b) => a - b);
+
+  const out: PageItem[] = [];
+  for (let i = 0; i < sorted.length; i++) {
+    const p = sorted[i];
+    const prev = sorted[i - 1];
+    if (i > 0 && prev != null && p - prev > 1) out.push("…");
+    out.push(p);
+  }
+  return out;
 }
 
 export default function CategoryListingClient({ slugPath }: Props) {
@@ -131,6 +161,29 @@ export default function CategoryListingClient({ slugPath }: Props) {
 
   const q = useCategoryProducts(slugPath, filters);
   const data = q.data;
+
+  const categoryName = data?.category?.name ?? null;
+
+  // ✅ source of truth from backend
+  const totalMaybe = data?.pagination?.total;
+  const totalLabel = totalMaybe == null ? "—" : String(totalMaybe);
+  const total = data?.pagination?.total ?? 0;
+
+  const page = filters.page ?? data?.pagination?.page ?? 1;
+  const perPage = filters.perPage ?? data?.pagination?.per_page ?? 24;
+
+  const pageCount = Math.max(1, Math.ceil((total || 0) / Math.max(1, perPage || 24)));
+  const view = (filters.view ?? "galerija") as ViewMode;
+
+  const sortOptions: Array<MicSelectOption<SortKey>> = React.useMemo(
+    () => SORT_SELECT_ALL.map((o) => ({ value: o.key, label: o.label, disabled: o.disabled })),
+    []
+  );
+
+  const perPageOptions: Array<MicSelectOption<string>> = React.useMemo(
+    () => PER_PAGE_OPTIONS.map((n) => ({ value: String(n), label: String(n) })),
+    []
+  );
 
   const [bounds, setBounds] = React.useState<{ min: number; max: number } | null>(null);
 
@@ -153,17 +206,6 @@ export default function CategoryListingClient({ slugPath }: Props) {
     for (const f of facets) m.set(f.code, f);
     return m;
   }, [facets]);
-
-  // ✅ show "—" until API arrives, not 0
-  const totalMaybe = data?.meta?.total;
-  const totalLabel = totalMaybe == null ? "—" : String(totalMaybe);
-
-  const total = data?.meta?.total ?? 0;
-  const page = filters.page ?? 1;
-  const pageCount = data?.meta?.page_count ?? 1;
-
-  const perPage = filters.perPage ?? 24;
-  const view = (filters.view ?? "galerija") as ViewMode;
 
   const facetSections = React.useMemo(() => {
     const knownOrder = ["brand", "size", "color", "material"];
@@ -201,8 +243,9 @@ export default function CategoryListingClient({ slugPath }: Props) {
     }
 
     if ((filters.sort ?? "podrazumevano") !== "podrazumevano") {
-      const label = SORT_SELECT_ALL.find((x) => x.key === (filters.sort ?? "podrazumevano"))?.label ?? "Sort";
-      out.push({ kind: "sort", label: `Sort: ${label}` });
+      const label =
+        SORT_SELECT_ALL.find((x) => x.key === (filters.sort ?? "podrazumevano"))?.label ?? "Cena: rastuće";
+      out.push({ kind: "sort", label });
     }
 
     if (view !== "galerija") out.push({ kind: "view", label: "Prikaz: Lista" });
@@ -213,7 +256,6 @@ export default function CategoryListingClient({ slugPath }: Props) {
 
   const activeCount = React.useMemo(() => {
     let c = 0;
-
     c += filters.brand?.length ?? 0;
     c += filters.size?.length ?? 0;
     c += filters.color?.length ?? 0;
@@ -255,6 +297,12 @@ export default function CategoryListingClient({ slugPath }: Props) {
   React.useEffect(() => {
     if (!!bounds && !sliderReadyOnce) setSliderReadyOnce(true);
   }, [bounds, sliderReadyOnce]);
+
+  const products = data?.products ?? [];
+  const showSkeleton = q.isLoading || (!data && q.isFetching);
+  const showEmpty = !showSkeleton && products.length === 0 && !q.error;
+
+  const paginationItems = React.useMemo(() => buildPagination(page, pageCount), [page, pageCount]);
 
   const FiltersContent = (
     <div className="flex flex-col gap-4">
@@ -330,7 +378,6 @@ export default function CategoryListingClient({ slugPath }: Props) {
     </div>
   );
 
-  // ✅ desktop-like indicator: only when fetching
   const mobileSubtitle = (
     <span className="inline-flex items-center gap-2">
       <span className="tabular-nums">{totalLabel} proizvoda</span>
@@ -343,9 +390,9 @@ export default function CategoryListingClient({ slugPath }: Props) {
       <div className="mb-3 flex items-start justify-between gap-3">
         <div className="min-w-0">
           <div className="text-[11px] mic-muted-2">{slugPath}</div>
-          <h1 className="truncate text-xl font-semibold">{data?.category?.name ?? "Kategorija"}</h1>
+          <h1 className="truncate text-xl font-semibold">{categoryName ?? "Kategorija"}</h1>
           <div className="mt-1 text-[12px] mic-muted">
-            {total} proizvoda • strana {page}/{pageCount}
+            {totalLabel} proizvoda • strana {page}/{pageCount}
             {q.isFetching ? (
               <span className="ml-2 inline-block h-2 w-2 rounded-full bg-black/30 align-middle animate-pulse" />
             ) : null}
@@ -363,78 +410,71 @@ export default function CategoryListingClient({ slugPath }: Props) {
         </button>
       </div>
 
+      {/* Mobile top bar */}
       <div className="lg:hidden mb-3">
         <div className="mic-card p-2">
           <div className="flex items-center justify-between gap-2">
-            <MobileFiltersDrawer
-              activeCount={activeCount}
-              subtitle={mobileSubtitle}
-              canReset={canReset}
-              onReset={resetAll}
-            >
+            <MobileFiltersDrawer activeCount={activeCount} subtitle={mobileSubtitle} canReset={canReset} onReset={resetAll}>
               {FiltersContent}
             </MobileFiltersDrawer>
 
             <div className="flex items-center gap-2">
               <ViewToggle value={view} onChange={setView} />
-              <select
-                className="mic-select"
-                value={filters.sort ?? "podrazumevano"}
-                onChange={(e) => setSort(e.target.value as SortKey)}
-                title="Sort"
-              >
-                {SORT_SELECT_ALL.map((opt) => (
-                  <option key={opt.key} value={opt.key} disabled={opt.disabled}>
-                    {opt.label}
-                  </option>
-                ))}
-              </select>
+              <MicSelect<SortKey>
+                value={(filters.sort ?? "podrazumevano") as SortKey}
+                onChange={(v) => setSort(v)}
+                options={sortOptions}
+                title="Sortiraj proizvode"
+                ariaLabel="Sortiraj proizvode"
+              />
             </div>
           </div>
 
           <div className="mt-2 flex items-center justify-between gap-2">
             <div className="text-[12px] mic-muted">Po strani</div>
-            <select className="mic-select" value={perPage} onChange={(e) => setPerPage(Number(e.target.value))}>
-              {PER_PAGE_OPTIONS.map((n) => (
-                <option key={n} value={n}>
-                  {n}
-                </option>
-              ))}
-            </select>
+            <MicSelect<string>
+              value={String(perPage)}
+              onChange={(v) => setPerPage(Number(v))}
+              options={perPageOptions}
+              title="Broj proizvoda po strani"
+              ariaLabel="Broj proizvoda po strani"
+            />
           </div>
         </div>
+
+        {chips.length ? (
+          <div className="mt-2 mic-card p-2">
+            <div className="flex gap-2 overflow-x-auto pb-1">
+              {chips.map((c) => (
+                <Chip
+                  key={`${c.kind}:${"code" in c ? c.code : ""}:${"value" in c ? c.value : ""}:${c.label}`}
+                  label={c.label}
+                  onRemove={() => removeChip(c)}
+                />
+              ))}
+            </div>
+          </div>
+        ) : null}
       </div>
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-[280px_1fr]">
+        {/* Sticky desktop filters (bez scrollovanja panela) */}
         <aside className="hidden lg:block">
-          <div className="mic-card p-3">
-            <div className="text-[13px] font-semibold">Filteri</div>
-            <div className="mt-3">{FiltersContent}</div>
+          <div className="sticky top-[88px]">
+            <div className="mic-card p-3">
+              <div className="text-[13px] font-semibold">Filteri</div>
+              <div className="mt-3">{FiltersContent}</div>
+            </div>
           </div>
         </aside>
 
         <main className="flex flex-col gap-3">
-          {chips.length ? (
-            <div className="lg:hidden">
-              <div className="mic-card p-2">
-                <div className="flex gap-2 overflow-x-auto pb-1">
-                  {chips.map((c) => (
-                    <Chip
-                      key={`${c.kind}:${"code" in c ? c.code : ""}:${"value" in c ? c.value : ""}:${c.label}`}
-                      label={c.label}
-                      onRemove={() => removeChip(c)}
-                    />
-                  ))}
-                </div>
-              </div>
-            </div>
-          ) : null}
-
+          {/* Desktop top bar + chips */}
           <div className="hidden lg:block">
             <div className="mic-card p-3">
               <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
                 <div className="flex flex-wrap items-center gap-2">
-                  <div className="text-[12px] font-semibold text-black/70">Sort:</div>
+                  <div className="text-[12px] font-semibold text-black/70">Sortiraj:</div>
 
                   <div className="flex flex-wrap gap-2">
                     {SORT_TABS.map((t) => {
@@ -453,7 +493,7 @@ export default function CategoryListingClient({ slugPath }: Props) {
                               : "rounded-md bg-white text-black/80 border-[rgb(var(--border))] hover:bg-black/5 hover:border-[rgb(var(--border-strong))]",
                             t.disabled ? "opacity-50 cursor-not-allowed" : "",
                           ].join(" ")}
-                          title={`Sort: ${t.label}`}
+                          title={`Sortiraj: ${t.label}`}
                         >
                           {t.label}
                         </button>
@@ -461,18 +501,14 @@ export default function CategoryListingClient({ slugPath }: Props) {
                     })}
                   </div>
 
-                  <select
-                    className="mic-select ml-1"
-                    value={filters.sort ?? "podrazumevano"}
-                    onChange={(e) => setSort(e.target.value as SortKey)}
+                  <MicSelect<SortKey>
+                    value={(filters.sort ?? "podrazumevano") as SortKey}
+                    onChange={(v) => setSort(v)}
+                    options={sortOptions}
                     title="Detaljnije sortiranje"
-                  >
-                    {SORT_SELECT_ALL.map((opt) => (
-                      <option key={opt.key} value={opt.key} disabled={opt.disabled}>
-                        {opt.label}
-                      </option>
-                    ))}
-                  </select>
+                    ariaLabel="Detaljnije sortiranje"
+                    className="ml-1"
+                  />
                 </div>
 
                 <div className="flex flex-wrap items-center gap-2">
@@ -480,13 +516,13 @@ export default function CategoryListingClient({ slugPath }: Props) {
 
                   <div className="flex items-center gap-2">
                     <div className="text-[12px] font-semibold text-black/70">Po strani</div>
-                    <select className="mic-select" value={perPage} onChange={(e) => setPerPage(Number(e.target.value))}>
-                      {PER_PAGE_OPTIONS.map((n) => (
-                        <option key={n} value={n}>
-                          {n}
-                        </option>
-                      ))}
-                    </select>
+                    <MicSelect<string>
+                      value={String(perPage)}
+                      onChange={(v) => setPerPage(Number(v))}
+                      options={perPageOptions}
+                      title="Broj proizvoda po strani"
+                      ariaLabel="Broj proizvoda po strani"
+                    />
                   </div>
                 </div>
               </div>
@@ -515,43 +551,135 @@ export default function CategoryListingClient({ slugPath }: Props) {
             </div>
           </div>
 
+          {/* Listing */}
           <div className="mic-card p-3">
-            {view === "galerija" ? (
-              <div className="grid grid-cols-2 gap-2 md:grid-cols-3 xl:grid-cols-4">
-                {(data?.products ?? []).map((p) => (
-                  <ProductCardGallery key={p.id} slugPath={slugPath} p={p} />
+            {showSkeleton ? (
+              view === "galerija" ? (
+                <div className="grid items-stretch grid-cols-2 gap-2 md:grid-cols-3 xl:grid-cols-4">
+                  {Array.from({ length: Math.min(12, perPage) }).map((_, i) => (
+                    <div key={i} className="mic-card p-3">
+                      <div className="aspect-[4/3] w-full rounded-md bg-black/10 animate-pulse" />
+                      <div className="mt-3 h-4 w-[90%] rounded-md bg-black/10 animate-pulse" />
+                      <div className="mt-2 h-4 w-[70%] rounded-md bg-black/10 animate-pulse" />
+                      <div className="mt-3 h-9 w-full rounded-md bg-black/10 animate-pulse" />
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="flex flex-col gap-2">
+                  {Array.from({ length: Math.min(8, perPage) }).map((_, i) => (
+                    <div key={i} className="mic-card p-3">
+                      <div className="grid grid-cols-[104px_1fr] gap-3 sm:grid-cols-[132px_1fr]">
+                        <div className="aspect-square w-full rounded-md bg-black/10 animate-pulse" />
+                        <div>
+                          <div className="h-4 w-[90%] rounded-md bg-black/10 animate-pulse" />
+                          <div className="mt-2 h-4 w-[60%] rounded-md bg-black/10 animate-pulse" />
+                          <div className="mt-3 h-9 w-[140px] rounded-md bg-black/10 animate-pulse" />
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )
+            ) : showEmpty ? (
+              <div className="mic-empty">
+                Nema proizvoda za izabrane filtere. Pokušaj da ukloniš neke filtere ili promeniš sortiranje.
+              </div>
+            ) : view === "galerija" ? (
+              <div className="grid items-stretch grid-cols-2 gap-2 md:grid-cols-3 xl:grid-cols-4">
+                {products.map((p) => (
+                  <ProductCardGallery key={p.id} slugPath={slugPath} categoryName={categoryName} p={p} />
                 ))}
               </div>
             ) : (
               <div className="flex flex-col gap-2">
-                {(data?.products ?? []).map((p) => (
-                  <ProductRowList key={p.id} slugPath={slugPath} p={p} />
+                {products.map((p) => (
+                  <ProductRowList key={p.id} slugPath={slugPath} categoryName={categoryName} p={p} />
                 ))}
               </div>
             )}
 
-            <div className="mt-4 flex items-center justify-between gap-2">
-              <button
-                type="button"
-                className="mic-btn h-9 px-3 text-[12px] disabled:opacity-50"
-                disabled={page <= 1}
-                onClick={() => setPage(page - 1)}
-              >
-                Prethodna
-              </button>
-
+            {/* Pagination */}
+            <div className="mt-4 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
               <div className="text-[12px] mic-muted">
-                Strana {page} / {pageCount}
+                Strana <span className="font-semibold text-black/80">{page}</span> /{" "}
+                <span className="font-semibold text-black/80">{pageCount}</span>
               </div>
 
-              <button
-                type="button"
-                className="mic-btn h-9 px-3 text-[12px] disabled:opacity-50"
-                disabled={page >= pageCount}
-                onClick={() => setPage(page + 1)}
-              >
-                Sledeća
-              </button>
+              <div className="flex flex-wrap items-center justify-start gap-2 sm:justify-end">
+                <button
+                  type="button"
+                  className="mic-btn h-9 px-3 text-[12px] disabled:opacity-50"
+                  disabled={page <= 1}
+                  onClick={() => setPage(1)}
+                  title="Prva strana"
+                >
+                  Prva
+                </button>
+
+                <button
+                  type="button"
+                  className="mic-btn h-9 px-3 text-[12px] disabled:opacity-50"
+                  disabled={page <= 1}
+                  onClick={() => setPage(page - 1)}
+                  title="Prethodna strana"
+                >
+                  Prethodna
+                </button>
+
+                <div className="flex flex-wrap items-center gap-1">
+                  {paginationItems.map((it, i) => {
+                    if (it === "…") {
+                      return (
+                        <span key={`dots-${i}`} className="px-2 text-[12px] mic-muted select-none">
+                          …
+                        </span>
+                      );
+                    }
+
+                    const isActive = it === page;
+
+                    return (
+                      <button
+                        key={it}
+                        type="button"
+                        onClick={() => setPage(it)}
+                        className={[
+                          "h-9 min-w-[40px] px-3 text-[12px] transition border",
+                          isActive
+                            ? "rounded-[6px] bg-black text-white border-transparent"
+                            : "rounded-md bg-white text-black/80 border-[rgb(var(--border))] hover:bg-black/5 hover:border-[rgb(var(--border-strong))]",
+                        ].join(" ")}
+                        aria-current={isActive ? "page" : undefined}
+                        title={`Strana ${it}`}
+                        disabled={pageCount <= 1}
+                      >
+                        {it}
+                      </button>
+                    );
+                  })}
+                </div>
+
+                <button
+                  type="button"
+                  className="mic-btn h-9 px-3 text-[12px] disabled:opacity-50"
+                  disabled={page >= pageCount}
+                  onClick={() => setPage(page + 1)}
+                  title="Sledeća strana"
+                >
+                  Sledeća
+                </button>
+
+                <button
+                  type="button"
+                  className="mic-btn h-9 px-3 text-[12px] disabled:opacity-50"
+                  disabled={page >= pageCount}
+                  onClick={() => setPage(pageCount)}
+                  title="Poslednja strana"
+                >
+                  Poslednja
+                </button>
+              </div>
             </div>
           </div>
         </main>
