@@ -2,10 +2,18 @@
 
 import * as React from "react";
 import Link from "next/link";
-import { ChevronLeft, ChevronRight, ShoppingCart } from "lucide-react";
+import { ChevronLeft, ChevronRight } from "lucide-react";
 
 import type { ProductListingItem, ProductImageDTO } from "@/hooks/useCategoryProducts";
 import { buildProductTitle } from "@/lib/site";
+import { ProductCardActions } from "@/components/catalog/ProductCardActions";
+import { extractPrice, formatRSD } from "./price";
+
+/**
+ * ✅ FORCE (samo za test da se promene vide):
+ * Kad potvrdiš da vidiš pillove, prebaci na false.
+ */
+const FORCE_SHOW_PILLS = true;
 
 function cx(...classes: Array<string | false | null | undefined>) {
   return classes.filter(Boolean).join(" ");
@@ -22,9 +30,9 @@ function getGallery(p: ProductListingItem): GalleryItem[] {
   const out: GalleryItem[] = [];
   const seen = new Set<string>();
 
-  const images = Array.isArray(p.images) ? p.images : [];
+  const images = Array.isArray((p as any).images) ? ((p as any).images as any[]) : [];
   for (const im of images) {
-    const url = pickUrl(im);
+    const url = pickUrl(im as any);
     if (!url) continue;
     if (seen.has(url)) continue;
     seen.add(url);
@@ -32,7 +40,7 @@ function getGallery(p: ProductListingItem): GalleryItem[] {
     if (out.length >= 6) break;
   }
 
-  const fallback = p.image_grid_url ?? p.image_thumb_url ?? null;
+  const fallback = (p as any).image_grid_url ?? (p as any).image_thumb_url ?? null;
   if (out.length === 0 && fallback) out.push({ main: fallback, thumb: fallback });
 
   return out;
@@ -43,9 +51,26 @@ function safeSlugPath(slugPath: string) {
   return s.length ? s : "";
 }
 
-function addToCart(p: ProductListingItem) {
-  // TODO: wire to real cart
-  console.log("[cart] add", p.id, p.name);
+function PriceStack({ p }: { p: ProductListingItem }) {
+  const price = extractPrice(p);
+
+  if (price.current == null) {
+    return <div className="text-xs mic-muted">Cena na upit</div>;
+  }
+
+  return (
+    <div className="flex flex-col">
+      <div className="text-[15px] font-semibold tracking-tight text-neutral-900 tabular-nums leading-tight">
+        {formatRSD(price.current)}
+      </div>
+
+      {price.old != null ? (
+        <div className="mt-0.5 text-[12px] mic-muted line-through tabular-nums leading-tight">
+          {formatRSD(price.old)}
+        </div>
+      ) : null}
+    </div>
+  );
 }
 
 export function ProductCardGallery({
@@ -58,7 +83,7 @@ export function ProductCardGallery({
   p: ProductListingItem;
 }) {
   const basePath = safeSlugPath(slugPath);
-  const href = basePath ? `/${basePath}/${p.slug}` : `/${p.slug}`;
+  const href = basePath ? `/${basePath}/${(p as any).slug}` : `/${(p as any).slug}`;
 
   const categoryLabel = (categoryName ?? "Katalog").trim() || "Katalog";
   const seoTitle = buildProductTitle(categoryLabel, p.name);
@@ -66,20 +91,31 @@ export function ProductCardGallery({
   const gallery = React.useMemo(() => getGallery(p), [p]);
   const [active, setActive] = React.useState(0);
 
-  React.useEffect(() => setActive(0), [p.id]);
+  React.useEffect(() => setActive(0), [(p as any).id]);
 
-  const activeSrc = gallery[active]?.main ?? gallery[0]?.main ?? p.image_grid_url ?? null;
+  const activeSrc = gallery[active]?.main ?? gallery[0]?.main ?? (p as any).image_grid_url ?? null;
+  const productId = ((p as any).id ?? (p as any).product_id) as string | number;
 
-  const isSale = !!p.is_sale;
+  const price = extractPrice(p);
+  const realPercent = price.percentOff ?? null;
+  const realIsSale = !!(p as any).is_sale || price.old != null || realPercent != null;
+
+  // ✅ Force prikaz (da se promene MORAJU videti)
+  const saleLabel = FORCE_SHOW_PILLS
+    ? "Akcija -25%"
+    : realIsSale
+      ? realPercent != null
+        ? `Akcija -${realPercent}%`
+        : "Akcija"
+      : null;
+
+  const showStock = FORCE_SHOW_PILLS ? true : false; // za sad samo test
+
   const canPrev = active > 0;
   const canNext = active < gallery.length - 1;
 
-  const cartTitle = p.name ? `Dodaj u korpu: ${p.name}` : "Dodaj u korpu";
-
   return (
-    // ✅ h-full + flex-col => grid može da izjednači visine
     <div className="mic-product-card group mic-card mic-card-hover relative overflow-hidden h-full flex flex-col">
-      {/* Media (fiksna visina preko aspect ratio) */}
       <Link href={href} title={seoTitle} className="block">
         <div className="relative aspect-[4/3] w-full overflow-hidden bg-neutral-50">
           {activeSrc ? (
@@ -92,14 +128,28 @@ export function ProductCardGallery({
               loading="lazy"
             />
           ) : (
-            <div className="flex h-full w-full items-center justify-center text-sm mic-muted">
-              Nema slike
-            </div>
+            <div className="flex h-full w-full items-center justify-center text-sm mic-muted">Nema slike</div>
           )}
 
-          {isSale ? (
-            <div className="absolute left-2 top-2 rounded-full bg-black px-2 py-1 text-xs font-semibold text-white">
-              Akcija
+          <div className="absolute right-2 top-2 z-10">
+            <ProductCardActions productId={productId} size="sm" variant="overlay" />
+          </div>
+
+          {/* ✅ Akcija gore levo */}
+          {saleLabel ? (
+            <div className="absolute left-2 top-2 z-10">
+              <div className="rounded-full bg-red-600 px-2 py-1 text-xs font-extrabold text-white shadow leading-none">
+                {saleLabel}
+              </div>
+            </div>
+          ) : null}
+
+          {/* ✅ Na stanju dole levo */}
+          {showStock ? (
+            <div className="absolute left-2 bottom-2 z-10">
+              <div className="rounded-full bg-emerald-500 px-2 py-1 text-xs font-semibold text-white shadow leading-none">
+                Na stanju
+              </div>
             </div>
           ) : null}
 
@@ -167,39 +217,23 @@ export function ProductCardGallery({
         </div>
       </Link>
 
-      {/* ✅ Content: flex-1 + mt-auto na CTA => dugme uvek na dnu */}
       <div className="flex flex-1 flex-col gap-2.5 p-3">
         <Link href={href} title={seoTitle} className="block">
-          {/* ✅ rezerviši visinu naslova (2 linije) da kartice ne “plešu” */}
           <div className="min-h-[40px] line-clamp-2 text-sm font-semibold leading-snug text-neutral-900 hover:underline">
             {p.name}
           </div>
         </Link>
 
-        {/* NOTE: Uklonjeno po zahtevu (B2B/cena na karticama).
-            Vraćamo kasnije uz B2B gating / pricing prikaz.
-        */}
+        {/* ✅ nova cena + stara ispod precrtana */}
+        <PriceStack p={p} />
 
-        {/* ✅ i ovaj blok ima stabilan footprint */}
         <div className="grid gap-1 text-xs mic-muted">
           <div className="min-h-[16px]" title="Rok isporuke">
-            Isporuka: 2–5 dana
+            Isporuka: 1–3 dana
           </div>
         </div>
 
-        {/* ✅ CTA uvek na dnu kartice */}
-        <button
-          type="button"
-          onClick={() => addToCart(p)}
-          className="mic-btn-primary w-full mt-auto"
-          aria-label="Dodaj u korpu"
-          title={cartTitle}
-        >
-          <span className="inline-flex items-center justify-center gap-2">
-            <ShoppingCart className="h-4 w-4" />
-            Dodaj u korpu
-          </span>
-        </button>
+        <div className="mt-auto" />
       </div>
     </div>
   );
