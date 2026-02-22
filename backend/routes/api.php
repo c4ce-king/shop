@@ -5,6 +5,7 @@ use Illuminate\Http\Request;
 
 use App\Http\Controllers\ShopApiController;
 use App\Http\Controllers\CatalogController;
+use App\Http\Controllers\StockAlertController;
 
 use App\Http\Controllers\Admin\ProductAdminController;
 use App\Http\Controllers\Admin\ProductImageAdminController;
@@ -26,6 +27,9 @@ Route::get('/product/{slug}', [CatalogController::class, 'productBySlug']);
 // Category listing products (SEO slug path može biti dubok: parent/child/child)
 Route::get('category/{slug_path}/products', [CatalogController::class, 'categoryProducts'])
     ->where('slug_path', '.*');
+
+// ✅ Stock alert (PRO): notify me when available
+Route::post('/notify', [StockAlertController::class, 'create']);
 
 // -------------------- ADMIN --------------------
 Route::middleware('admin.token')->prefix('admin')->group(function () {

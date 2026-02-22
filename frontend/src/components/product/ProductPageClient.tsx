@@ -5,6 +5,7 @@ import { createPortal } from "react-dom";
 import { X, ChevronLeft, ChevronRight } from "lucide-react";
 import { useProduct } from "@/hooks/useProduct";
 import type { ProductImageDTO } from "@/hooks/useCategoryProducts";
+import { NotifyMeModal } from "@/components/product/NotifyMeModal";
 
 function formatRSD(n: number) {
   return new Intl.NumberFormat("sr-RS").format(Math.round(n)) + " RSD";
@@ -20,9 +21,15 @@ function pickThumb(img: ProductImageDTO | undefined | null): string | null {
   return img.thumb ?? img.grid ?? img.original ?? img.pdp ?? null;
 }
 
+function toNumberOrNull(x: any): number | null {
+  if (typeof x === "number" && Number.isFinite(x)) return x;
+  if (typeof x === "string" && x.trim() !== "" && !Number.isNaN(Number(x))) return Number(x);
+  return null;
+}
+
 export default function ProductPageClient({ slug }: { slug: string }) {
   const q = useProduct(slug);
-  const p = q.data;
+  const p = q.data as any;
 
   const [hydrated, setHydrated] = React.useState(false);
   React.useEffect(() => setHydrated(true), []);
@@ -85,79 +92,89 @@ export default function ProductPageClient({ slug }: { slug: string }) {
 
   const pageTitle = `${p.name} — ${formatRSD(p.price_rsd)}`;
 
-const Lightbox = open ? (
-  <div
-    style={{ position: "fixed", inset: 0, zIndex: 99999 }}
-    className="bg-black/80 p-4"
-    onClick={() => setOpen(false)} // ✅ klik na backdrop zatvara
-    role="dialog"
-    aria-modal="true"
-    aria-label={`Uvećani prikaz: ${p.name}`}
-    title="Klik van slike zatvara"
-  >
-    {/* ✅ OVAJ WRAPPER VIŠE NE SME da stopPropagation */}
-    <div className="mx-auto flex h-full w-full max-w-5xl items-center justify-center">
-      {/* ✅ STOP PROPAGATION IDE SAMO NA PANEL */}
-      <div className="relative w-full" onClick={(e) => e.stopPropagation()}>
-        <button
-          type="button"
-          className="absolute right-3 top-3 z-10 rounded-full bg-white/10 p-2 text-white hover:bg-white/20"
-          onClick={() => setOpen(false)}
-          aria-label="Zatvori"
-          title="Zatvori (ESC)"
-        >
-          <X className="h-5 w-5" />
-        </button>
+  const Lightbox = open ? (
+    <div
+      style={{ position: "fixed", inset: 0, zIndex: 99999 }}
+      className="bg-black/80 p-4"
+      onClick={() => setOpen(false)}
+      role="dialog"
+      aria-modal="true"
+      aria-label={`Uvećani prikaz: ${p.name}`}
+      title="Klik van slike zatvara"
+    >
+      <div className="mx-auto flex h-full w-full max-w-5xl items-center justify-center">
+        <div className="relative w-full" onClick={(e) => e.stopPropagation()}>
+          <button
+            type="button"
+            className="absolute right-3 top-3 z-10 rounded-full bg-white/10 p-2 text-white hover:bg-white/20"
+            onClick={() => setOpen(false)}
+            aria-label="Zatvori"
+            title="Zatvori (ESC)"
+          >
+            <X className="h-5 w-5" />
+          </button>
 
-        <div className="relative overflow-hidden rounded-2xl bg-black">
-          {mainUrl ? (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img
-              src={mainUrl}
-              alt={p.name}
-              title={p.name}
-              className="max-h-[80vh] w-full object-contain"
-              draggable={false}
-            />
-          ) : (
-            <div className="flex h-[60vh] items-center justify-center text-sm text-white/70">Nema slike</div>
-          )}
+          <div className="relative overflow-hidden rounded-2xl bg-black">
+            {mainUrl ? (
+              <img
+                src={mainUrl}
+                alt={p.name}
+                title={p.name}
+                className="max-h-[80vh] w-full object-contain"
+                draggable={false}
+              />
+            ) : (
+              <div className="flex h-[60vh] items-center justify-center text-sm text-white/70">Nema slike</div>
+            )}
 
-          {images.length > 1 ? (
-            <>
-              <button
-                type="button"
-                className="absolute left-3 top-1/2 -translate-y-1/2 rounded-full bg-white/10 p-2 text-white hover:bg-white/20 disabled:opacity-40"
-                onClick={() => setIdx((x) => Math.max(0, x - 1))}
-                disabled={!canPrev}
-                aria-label="Prethodna slika"
-                title="Prethodna (←)"
-              >
-                <ChevronLeft className="h-6 w-6" />
-              </button>
+            {images.length > 1 ? (
+              <>
+                <button
+                  type="button"
+                  className="absolute left-3 top-1/2 -translate-y-1/2 rounded-full bg-white/10 p-2 text-white hover:bg-white/20 disabled:opacity-40"
+                  onClick={() => setIdx((x) => Math.max(0, x - 1))}
+                  disabled={!canPrev}
+                  aria-label="Prethodna slika"
+                  title="Prethodna (←)"
+                >
+                  <ChevronLeft className="h-6 w-6" />
+                </button>
 
-              <button
-                type="button"
-                className="absolute right-3 top-1/2 -translate-y-1/2 rounded-full bg-white/10 p-2 text-white hover:bg-white/20 disabled:opacity-40"
-                onClick={() => setIdx((x) => Math.min(images.length - 1, x + 1))}
-                disabled={!canNext}
-                aria-label="Sledeća slika"
-                title="Sledeća (→)"
-              >
-                <ChevronRight className="h-6 w-6" />
-              </button>
-            </>
-          ) : null}
-        </div>
+                <button
+                  type="button"
+                  className="absolute right-3 top-1/2 -translate-y-1/2 rounded-full bg-white/10 p-2 text-white hover:bg-white/20 disabled:opacity-40"
+                  onClick={() => setIdx((x) => Math.min(images.length - 1, x + 1))}
+                  disabled={!canNext}
+                  aria-label="Sledeća slika"
+                  title="Sledeća (→)"
+                >
+                  <ChevronRight className="h-6 w-6" />
+                </button>
+              </>
+            ) : null}
+          </div>
 
-        <div className="mt-3 text-center text-xs text-white/70" title="Uputstvo">
-          ESC zatvara{images.length > 1 ? " • ← → menja sliku" : ""}
+          <div className="mt-3 text-center text-xs text-white/70" title="Uputstvo">
+            ESC zatvara{images.length > 1 ? " • ← → menja sliku" : ""}
+          </div>
         </div>
       </div>
     </div>
-  </div>
-) : null;
+  ) : null;
 
+  // ✅ stock logic (PRO)
+  const stockQty = toNumberOrNull(p.stock_qty) ?? 0;
+  const stockStatus = typeof p.stock_status === "string" ? p.stock_status : null;
+  const inStockBool = typeof p.in_stock === "boolean" ? p.in_stock : null;
+
+  const isOut =
+    stockQty <= 0 ||
+    stockStatus === "out_of_stock" ||
+    (stockStatus == null && inStockBool === false);
+
+  const productId = Number(p.id);
+
+  const [notifyOpen, setNotifyOpen] = React.useState(false);
 
   return (
     <div className="mx-auto w-full max-w-5xl px-4 py-6">
@@ -165,7 +182,6 @@ const Lightbox = open ? (
         //{slug}
       </div>
 
-      {/* Debug */}
       <div className="mt-1 text-[11px] text-black/40" title="Debug">
         JS: {hydrated ? "OK" : "NE"} • OPEN: {open ? "DA" : "NE"} • IMAGES: {images.length}
       </div>
@@ -181,11 +197,10 @@ const Lightbox = open ? (
                 aria-label="Otvori uvećani prikaz slike"
                 title="Klik za uvećanje"
               >
-                {/* eslint-disable-next-line @next/next/no-img-element */}
                 <img
                   src={mainUrl}
-                  alt={p.name}     // ✅ alt (SEO + accessibility)
-                  title={p.name}   // ✅ title (kako želiš)
+                  alt={p.name}
+                  title={p.name}
                   className="h-full w-full object-contain"
                   draggable={false}
                 />
@@ -197,7 +212,6 @@ const Lightbox = open ? (
             )}
           </div>
 
-          {/* thumbnail i kad je 1 slika */}
           {images.length >= 1 ? (
             <div className="mt-3 flex gap-2 overflow-x-auto pb-1" title="Galerija slika">
               {images.map((im, i) => {
@@ -215,10 +229,7 @@ const Lightbox = open ? (
                     aria-label={tTitle}
                     title={tTitle}
                   >
-                    {t ? (
-                      // eslint-disable-next-line @next/next/no-img-element
-                      <img src={t} alt={tTitle} title={tTitle} className="h-full w-full object-cover" draggable={false} />
-                    ) : null}
+                    {t ? <img src={t} alt={tTitle} title={tTitle} className="h-full w-full object-cover" draggable={false} /> : null}
                   </button>
                 );
               })}
@@ -227,14 +238,39 @@ const Lightbox = open ? (
         </div>
 
         <div className="min-w-0">
-          {/* ✅ H1 + title */}
           <h1 className="text-xl font-semibold leading-tight" title={p.name}>
             {p.name}
           </h1>
 
-          {/* ✅ cena + title */}
           <div className="mt-2 text-lg font-bold" title={pageTitle}>
             {formatRSD(p.price_rsd)}
+          </div>
+
+          {/* ✅ CTA block */}
+          <div className="mt-3 flex flex-wrap items-center gap-2">
+            {isOut ? (
+              <>
+                <button
+                  type="button"
+                  className="mic-btn-primary h-9 px-4 text-[12px]"
+                  onClick={() => setNotifyOpen(true)}
+                  title="Obavesti me kada bude dostupno"
+                >
+                  Obavesti me
+                </button>
+                <div className="text-[12px] text-red-600 font-semibold">
+                  Proizvod nije dostupan
+                </div>
+              </>
+            ) : (
+              <>
+                {/* MVP cart CTA (možeš kasnije povezati na uiCart/addCart) */}
+                <button type="button" className="mic-btn-primary h-9 px-4 text-[12px]" title="Dodaj u korpu">
+                  Dodaj u korpu
+                </button>
+                <div className="text-[12px] text-emerald-600 font-semibold">Na stanju</div>
+              </>
+            )}
           </div>
 
           <div className="mt-4 rounded-2xl border bg-white p-4 text-sm text-black/70" title="Napomena">
@@ -245,6 +281,14 @@ const Lightbox = open ? (
 
       {/* ✅ PORTAL */}
       {hydrated && Lightbox ? createPortal(Lightbox, document.body) : null}
+
+      {/* ✅ Notify modal */}
+      <NotifyMeModal
+        open={notifyOpen}
+        onClose={() => setNotifyOpen(false)}
+        productId={productId}
+        productName={String(p.name ?? "")}
+      />
     </div>
   );
 }
