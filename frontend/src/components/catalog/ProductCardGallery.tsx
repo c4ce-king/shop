@@ -9,10 +9,6 @@ import { buildProductTitle } from "@/lib/site";
 import { ProductCardActions } from "@/components/catalog/ProductCardActions";
 import { extractPrice, formatRSD } from "./price";
 
-/**
- * Debug switch: ostavi false.
- * (Ako ikad misliš da se CSS/UI ne refresuje, privremeno stavi true.)
- */
 const FORCE_SHOW_PILLS = false;
 
 function cx(...classes: Array<string | false | null | undefined>) {
@@ -55,7 +51,6 @@ function PriceStack({ p }: { p: ProductListingItem }) {
   const price = extractPrice(p);
 
   if (price.current == null) {
-    // rezerviši visinu da “Isporuka” ne skače
     return (
       <div className="flex flex-col min-h-[38px] justify-start">
         <div className="text-xs mic-muted">Cena na upit</div>
@@ -75,7 +70,6 @@ function PriceStack({ p }: { p: ProductListingItem }) {
           {formatRSD(price.old)}
         </div>
       ) : (
-        // placeholder linija da isporuka bude u istoj ravni i kad nema popusta
         <div className="mt-0.5 text-[12px] opacity-0 select-none leading-tight">x</div>
       )}
     </div>
@@ -85,7 +79,6 @@ function PriceStack({ p }: { p: ProductListingItem }) {
 type StockState = "in" | "low" | "out" | null;
 
 function getStockState(p: any): StockState {
-  // robust: prihvati number ili string iz API-ja
   const qtyRaw = p?.stock_qty;
   const qty =
     typeof qtyRaw === "number"
@@ -98,8 +91,8 @@ function getStockState(p: any): StockState {
 
   if (qty != null) {
     if (qty <= 0) return "out";
-    if (qty < 3) return "low"; // 1–2
-    return "in"; // 3+
+    if (qty < 3) return "low";
+    return "in";
   }
 
   if (inStockBool === false) return "out";
@@ -120,7 +113,6 @@ function StockLine({ p }: { p: ProductListingItem }) {
           ? "Proizvod nije dostupan"
           : null;
 
-  // ✅ low = ista žuta kao mic-chip-dot (rgb(var(--accent)))
   const textClass =
     state === "in"
       ? "text-emerald-600"
@@ -172,8 +164,6 @@ export function ProductCardGallery({
 
   const price = extractPrice(p);
   const realPercent = price.percentOff ?? null;
-
-  // ✅ samo "-xx%" (procenti ostaju na pill-u)
   const discountLabel = FORCE_SHOW_PILLS ? "-25%" : realPercent != null ? `-${realPercent}%` : null;
 
   const showPillBar = !!discountLabel;
@@ -182,7 +172,6 @@ export function ProductCardGallery({
   const canPrev = active > 0;
   const canNext = active < gallery.length - 1;
 
-  // ✅ disable add-to-cart kada je OUT
   const stockState: StockState = FORCE_SHOW_PILLS ? "low" : getStockState(p as any);
   const disableCart = stockState === "out";
 
@@ -206,7 +195,13 @@ export function ProductCardGallery({
         </Link>
 
         <div className="absolute right-2 top-2 z-50 pointer-events-auto opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity">
-          <ProductCardActions productId={productId} disableCart={disableCart} size="sm" variant="overlay" />
+          <ProductCardActions
+            productId={productId}
+            productName={p.name}
+            disableCart={disableCart}
+            size="sm"
+            variant="overlay"
+          />
         </div>
 
         {showPillBar ? (
@@ -264,10 +259,7 @@ export function ProductCardGallery({
 
             <div className={cx("absolute left-0 right-0 z-30 flex items-center justify-center gap-1.5 px-2 pointer-events-none", dotsBottomClass)}>
               {gallery.map((g, i) => (
-                <span
-                  key={`${g.thumb}-${i}`}
-                  className={cx("h-1.5 w-1.5 rounded-full transition", i === active ? "bg-black" : "bg-black/30")}
-                />
+                <span key={`${g.thumb}-${i}`} className={cx("h-1.5 w-1.5 rounded-full transition", i === active ? "bg-black" : "bg-black/30")} />
               ))}
             </div>
           </>

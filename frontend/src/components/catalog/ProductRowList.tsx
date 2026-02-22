@@ -168,13 +168,11 @@ export function ProductRowList({
 
   const price = extractPrice(p);
   const realPercent = price.percentOff ?? null;
-
   const discountLabel = DEBUG_FORCE_PILLS ? "-25%" : realPercent != null ? `-${realPercent}%` : null;
 
   const showPills = !!discountLabel;
   const dotsBottomClass = showPills ? "bottom-8" : "bottom-2";
 
-  // ✅ disable add-to-cart kada je OUT
   const stockState: StockState = DEBUG_FORCE_PILLS ? "low" : getStockState(p as any);
   const disableCart = stockState === "out";
 
@@ -255,10 +253,7 @@ export function ProductRowList({
 
                 <div className={cx("absolute left-0 right-0 flex items-center justify-center gap-1.5 px-2 pointer-events-none", dotsBottomClass)}>
                   {gallery.map((g, i) => (
-                    <span
-                      key={`${g.thumb}-${i}`}
-                      className={cx("h-1.5 w-1.5 rounded-full transition", i === active ? "bg-black" : "bg-black/30")}
-                    />
+                    <span key={`${g.thumb}-${i}`} className={cx("h-1.5 w-1.5 rounded-full transition", i === active ? "bg-black" : "bg-black/30")} />
                   ))}
                 </div>
               </>
@@ -288,7 +283,13 @@ export function ProductRowList({
           </div>
 
           <div className="pt-2 mt-2 flex items-end justify-end border-t" style={{ borderColor: "rgb(var(--border))" }}>
-            <ProductCardActions productId={productId} disableCart={disableCart} size="sm" variant="inline" />
+            <ProductCardActions
+              productId={productId}
+              productName={p.name}
+              disableCart={disableCart}
+              size="sm"
+              variant="inline"
+            />
           </div>
         </div>
       </div>

@@ -5,19 +5,31 @@ import { createPortal } from "react-dom";
 import { ShoppingCart, Heart, ArrowLeftRight } from "lucide-react";
 
 import { uiCart, useUiCart, type Id } from "../../store/uiCart";
+import { emitNotifyMeOpen } from "@/lib/notifyMeBus";
 
 type Props = {
   productId: Id;
-  disabled?: boolean;      // disables ALL actions
-  disableCart?: boolean;   // disables ONLY add-to-cart (out of stock)
+  productName?: string;
+
+  /** disables ALL actions */
+  disabled?: boolean;
+
+  /** disables ONLY add-to-cart (out of stock) */
+  disableCart?: boolean;
+
   size?: "sm" | "md";
   variant?: "overlay" | "inline";
 };
 
 type TipPos = { left: number; top: number; arrowLeft: number };
 
+function cx(...classes: Array<string | false | null | undefined>) {
+  return classes.filter(Boolean).join(" ");
+}
+
 export function ProductCardActions({
   productId,
+  productName,
   disabled = false,
   disableCart = false,
   size = "md",
@@ -52,6 +64,7 @@ export function ProductCardActions({
     "hover:!bg-orange-600 active:!bg-orange-600 " +
     "shadow-[0_10px_24px_rgba(0,0,0,0.16)]";
 
+  // disabled cart: gray button, but still clickable via wrapper (button itself disabled)
   const cartBtnDisabled =
     "!bg-black/25 !text-white " +
     "hover:!bg-black/25 active:!bg-black/25 " +
@@ -62,6 +75,7 @@ export function ProductCardActions({
   const allDisabled = disabled;
   const cartDisabled = disabled || disableCart;
 
+  // --- portal tooltip positioning ---
   const cartWrapRef = React.useRef<HTMLDivElement | null>(null);
   const tipRef = React.useRef<HTMLDivElement | null>(null);
 
@@ -71,8 +85,8 @@ export function ProductCardActions({
 
   React.useEffect(() => setCanPortal(true), []);
 
-  const TIP_PAD = 10; // razmak od ivica ekrana
-  const GAP = 10;     // razmak od dugmeta do tooltip-a (ispod)
+  const TIP_PAD = 10;
+  const GAP = 10;
 
   function computeTipPos() {
     const el = cartWrapRef.current;
@@ -80,17 +94,16 @@ export function ProductCardActions({
     if (!el || !tipEl) return;
 
     const r = el.getBoundingClientRect();
-
-    // realna širina tooltip-a (posle rendera)
     const tipW = Math.ceil(tipEl.getBoundingClientRect().width);
-
     const vw = window.innerWidth;
+
     const desiredLeft = r.left + r.width / 2 - tipW / 2;
     const clampedLeft = Math.max(TIP_PAD, Math.min(vw - TIP_PAD - tipW, desiredLeft));
 
     const arrowCenter = r.left + r.width / 2;
     const arrowLeft = Math.max(12, Math.min(tipW - 12, arrowCenter - clampedLeft));
 
+    // tooltip below button
     const top = r.bottom + GAP;
 
     setTipPos({ left: clampedLeft, top, arrowLeft });
@@ -99,10 +112,7 @@ export function ProductCardActions({
   function openTip() {
     if (!cartDisabled) return;
     setTipOpen(true);
-    // 1) render tooltip, 2) izmeri width, 3) pozicioniraj
-    requestAnimationFrame(() => {
-      requestAnimationFrame(() => computeTipPos());
-    });
+    requestAnimationFrame(() => requestAnimationFrame(computeTipPos));
   }
 
   function closeTip() {
@@ -124,8 +134,20 @@ export function ProductCardActions({
     };
   }, [tipOpen]);
 
+  function triggerNotify() {
+    const pid = Number(productId);
+    if (!Number.isFinite(pid) || pid <= 0) return;
+
+    emitNotifyMeOpen({
+      productId: pid,
+      productName: String(productName ?? "").trim() || "Proizvod",
+    });
+
+    closeTip();
+  }
+
   const tooltipNode =
-    canPortal && tipOpen
+    canPortal && tipOpen && cartDisabled
       ? createPortal(
           <div
             ref={tipRef}
@@ -135,18 +157,29 @@ export function ProductCardActions({
               top: tipPos?.top ?? -9999,
               zIndex: 9999,
             }}
-            className="pointer-events-none"
+            className="pointer-events-auto"
             role="tooltip"
             aria-hidden={!tipOpen}
+            onMouseEnter={openTip}
+            onMouseLeave={closeTip}
           >
-            {/* arrow (gore, pokazuje na dugme) */}
+            {/* arrow up */}
             <div
               style={{ left: (tipPos?.arrowLeft ?? 12) - 6 }}
               className="absolute -top-1.5 h-3 w-3 rotate-45 bg-orange-500 shadow-[0_10px_24px_rgba(0,0,0,0.12)]"
             />
-            <div className="inline-block rounded-md bg-orange-500 px-2 py-1 text-[11px] font-semibold text-white shadow-[0_10px_24px_rgba(0,0,0,0.18)] whitespace-nowrap">
-              Nedostupno
-            </div>
+            <button
+              type="button"
+              onClick={triggerNotify}
+              className={cx(
+                "rounded-md bg-orange-500 px-2.5 py-1.5 text-[11px] font-semibold text-white",
+                "shadow-[0_10px_24px_rgba(0,0,0,0.18)] whitespace-nowrap",
+                "hover:bg-orange-600 active:bg-orange-600 transition"
+              )}
+              title="Klikni: Obavesti me"
+            >
+              Nedostupno · Obavesti me
+            </button>
           </div>,
           document.body
         )
@@ -179,13 +212,20 @@ export function ProductCardActions({
           {compared ? <span className={dot} aria-hidden="true" /> : null}
         </button>
 
+        {/* cart wrapper handles click when disabled */}
         <div
           ref={cartWrapRef}
+          className="relative"
           onMouseEnter={openTip}
           onMouseLeave={closeTip}
           onFocus={openTip}
           onBlur={closeTip}
-          className="relative"
+          onClick={() => {
+            // ✅ Click on disabled cart triggers notify
+            if (cartDisabled) triggerNotify();
+          }}
+          style={{ cursor: cartDisabled ? "pointer" : "default" }}
+          title={cartDisabled ? "Nedostupno — klikni da te obavestimo" : undefined}
         >
           <button
             type="button"
@@ -195,8 +235,13 @@ export function ProductCardActions({
                 ? { backgroundColor: "rgba(0,0,0,0.25)", color: "white" }
                 : { backgroundColor: "#F97316", color: "white" }
             }
-            onClick={() => {
-              if (cartDisabled) return;
+            onClick={(e) => {
+              if (cartDisabled) {
+                e.preventDefault();
+                e.stopPropagation();
+                triggerNotify();
+                return;
+              }
               uiCart.addCart(productId);
             }}
             disabled={cartDisabled}

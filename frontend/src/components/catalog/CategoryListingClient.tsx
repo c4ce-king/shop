@@ -12,6 +12,10 @@ import { FacetBlock } from "@/components/catalog/FacetBlock";
 import { MobileFiltersDrawer } from "@/components/catalog/MobileFiltersDrawer";
 import { MicSelect, type MicSelectOption } from "@/components/ui/MicSelect";
 
+// ✅ NEW: notify modal (listing trigger)
+import { NotifyMeModal } from "@/components/product/NotifyMeModal";
+import { onNotifyMeOpen, type NotifyMePayload } from "@/lib/notifyMeBus";
+
 type Props = { slugPath: string };
 
 const SORT_TABS: Array<{ key: SortKey; label: string; disabled?: boolean }> = [
@@ -164,7 +168,6 @@ export default function CategoryListingClient({ slugPath }: Props) {
 
   const categoryName = data?.category?.name ?? null;
 
-  // ✅ source of truth from backend
   const totalMaybe = data?.pagination?.total;
   const totalLabel = totalMaybe == null ? "—" : String(totalMaybe);
   const total = data?.pagination?.total ?? 0;
@@ -304,6 +307,17 @@ export default function CategoryListingClient({ slugPath }: Props) {
 
   const paginationItems = React.useMemo(() => buildPagination(page, pageCount), [page, pageCount]);
 
+  // ✅ NEW: modal state + listener (listing)
+  const [notify, setNotify] = React.useState<NotifyMePayload | null>(null);
+  const [notifyOpen, setNotifyOpen] = React.useState(false);
+
+  React.useEffect(() => {
+    return onNotifyMeOpen((payload) => {
+      setNotify(payload);
+      setNotifyOpen(true);
+    });
+  }, []);
+
   const FiltersContent = (
     <div className="flex flex-col gap-4">
       <div className="mic-card p-3">
@@ -410,7 +424,6 @@ export default function CategoryListingClient({ slugPath }: Props) {
         </button>
       </div>
 
-      {/* Mobile top bar */}
       <div className="lg:hidden mb-3">
         <div className="mic-card p-2">
           <div className="flex items-center justify-between gap-2">
@@ -458,7 +471,6 @@ export default function CategoryListingClient({ slugPath }: Props) {
       </div>
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-[280px_1fr]">
-        {/* Sticky desktop filters (bez scrollovanja panela) */}
         <aside className="hidden lg:block">
           <div className="sticky top-[88px]">
             <div className="mic-card p-3">
@@ -469,7 +481,6 @@ export default function CategoryListingClient({ slugPath }: Props) {
         </aside>
 
         <main className="flex flex-col gap-3">
-          {/* Desktop top bar + chips */}
           <div className="hidden lg:block">
             <div className="mic-card p-3">
               <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
@@ -551,7 +562,6 @@ export default function CategoryListingClient({ slugPath }: Props) {
             </div>
           </div>
 
-          {/* Listing */}
           <div className="mic-card p-3">
             {showSkeleton ? (
               view === "galerija" ? (
@@ -599,7 +609,6 @@ export default function CategoryListingClient({ slugPath }: Props) {
               </div>
             )}
 
-            {/* Pagination */}
             <div className="mt-4 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
               <div className="text-[12px] mic-muted">
                 Strana <span className="font-semibold text-black/80">{page}</span> /{" "}
@@ -607,35 +616,16 @@ export default function CategoryListingClient({ slugPath }: Props) {
               </div>
 
               <div className="flex flex-wrap items-center justify-start gap-2 sm:justify-end">
-                <button
-                  type="button"
-                  className="mic-btn h-9 px-3 text-[12px] disabled:opacity-50"
-                  disabled={page <= 1}
-                  onClick={() => setPage(1)}
-                  title="Prva strana"
-                >
+                <button type="button" className="mic-btn h-9 px-3 text-[12px] disabled:opacity-50" disabled={page <= 1} onClick={() => setPage(1)}>
                   Prva
                 </button>
-
-                <button
-                  type="button"
-                  className="mic-btn h-9 px-3 text-[12px] disabled:opacity-50"
-                  disabled={page <= 1}
-                  onClick={() => setPage(page - 1)}
-                  title="Prethodna strana"
-                >
+                <button type="button" className="mic-btn h-9 px-3 text-[12px] disabled:opacity-50" disabled={page <= 1} onClick={() => setPage(page - 1)}>
                   Prethodna
                 </button>
 
                 <div className="flex flex-wrap items-center gap-1">
                   {paginationItems.map((it, i) => {
-                    if (it === "…") {
-                      return (
-                        <span key={`dots-${i}`} className="px-2 text-[12px] mic-muted select-none">
-                          …
-                        </span>
-                      );
-                    }
+                    if (it === "…") return <span key={`dots-${i}`} className="px-2 text-[12px] mic-muted select-none">…</span>;
 
                     const isActive = it === page;
 
@@ -651,7 +641,6 @@ export default function CategoryListingClient({ slugPath }: Props) {
                             : "rounded-md bg-white text-black/80 border-[rgb(var(--border))] hover:bg-black/5 hover:border-[rgb(var(--border-strong))]",
                         ].join(" ")}
                         aria-current={isActive ? "page" : undefined}
-                        title={`Strana ${it}`}
                         disabled={pageCount <= 1}
                       >
                         {it}
@@ -660,23 +649,10 @@ export default function CategoryListingClient({ slugPath }: Props) {
                   })}
                 </div>
 
-                <button
-                  type="button"
-                  className="mic-btn h-9 px-3 text-[12px] disabled:opacity-50"
-                  disabled={page >= pageCount}
-                  onClick={() => setPage(page + 1)}
-                  title="Sledeća strana"
-                >
+                <button type="button" className="mic-btn h-9 px-3 text-[12px] disabled:opacity-50" disabled={page >= pageCount} onClick={() => setPage(page + 1)}>
                   Sledeća
                 </button>
-
-                <button
-                  type="button"
-                  className="mic-btn h-9 px-3 text-[12px] disabled:opacity-50"
-                  disabled={page >= pageCount}
-                  onClick={() => setPage(pageCount)}
-                  title="Poslednja strana"
-                >
+                <button type="button" className="mic-btn h-9 px-3 text-[12px] disabled:opacity-50" disabled={page >= pageCount} onClick={() => setPage(pageCount)}>
                   Poslednja
                 </button>
               </div>
@@ -684,6 +660,14 @@ export default function CategoryListingClient({ slugPath }: Props) {
           </div>
         </main>
       </div>
+
+      {/* ✅ Listing Notify modal */}
+      <NotifyMeModal
+        open={notifyOpen}
+        onClose={() => setNotifyOpen(false)}
+        productId={notify?.productId ?? 0}
+        productName={notify?.productName ?? "Proizvod"}
+      />
     </div>
   );
 }
