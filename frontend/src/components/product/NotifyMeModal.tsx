@@ -13,9 +13,11 @@ function cx(...classes: Array<string | false | null | undefined>) {
   return classes.filter(Boolean).join(" ");
 }
 
-function isValidEmail(s: string) {
-  const t = s.trim();
-  return t.length >= 5 && t.includes("@");
+function isValidEmail(input: string): boolean {
+  const s = input.trim();
+  if (s.length < 6 || s.length > 190) return false;
+  const re = /^[a-zA-Z0-9.!#$%&'*+/=?^_`{|}~-]+@([a-zA-Z0-9-]+\.)+[a-zA-Z]{2,}$/;
+  return re.test(s);
 }
 
 export function NotifyMeModal({ open, onClose, productId, productName }: Props) {
@@ -26,13 +28,33 @@ export function NotifyMeModal({ open, onClose, productId, productName }: Props) 
   const [status, setStatus] = React.useState<"idle" | "sending" | "ok" | "err">("idle");
   const [errMsg, setErrMsg] = React.useState<string | null>(null);
 
+  const [mounted, setMounted] = React.useState(false);
+  const [phase, setPhase] = React.useState<"enter" | "exit">("enter");
+
+  const [shake, setShake] = React.useState(false);
+  const [successPulse, setSuccessPulse] = React.useState(false);
+
+  const EXIT_MS = 900;
+  const AUTO_CLOSE_MS = 4500;
+
   React.useEffect(() => {
-    if (!open) return;
-    setEmail("");
-    setPhone("");
-    setNote("");
-    setStatus("idle");
-    setErrMsg(null);
+    if (open) {
+      setMounted(true);
+      setPhase("enter");
+
+      setEmail("");
+      setPhone("");
+      setNote("");
+      setStatus("idle");
+      setErrMsg(null);
+      setShake(false);
+      setSuccessPulse(false);
+    } else if (mounted) {
+      setPhase("exit");
+      const t = window.setTimeout(() => setMounted(false), EXIT_MS);
+      return () => window.clearTimeout(t);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
   React.useEffect(() => {
@@ -44,15 +66,27 @@ export function NotifyMeModal({ open, onClose, productId, productName }: Props) 
     return () => window.removeEventListener("keydown", onKey);
   }, [open, onClose]);
 
-  if (!open) return null;
+  if (!mounted) return null;
 
-  const canSend = isValidEmail(email) && status !== "sending";
+  const emailOk = isValidEmail(email);
+  const canSend = emailOk && status !== "sending";
 
   async function onSubmit() {
-    if (!canSend) return;
+    if (!canSend) {
+      setShake(true);
+      window.setTimeout(() => setShake(false), 520);
+
+      if (!emailOk) {
+        setStatus("err");
+        setErrMsg("Unesi validan email (npr. ime@domen.com).");
+      }
+      return;
+    }
 
     setStatus("sending");
     setErrMsg(null);
+    setShake(false);
+    setSuccessPulse(false);
 
     try {
       const res = await fetch("/api/notify", {
@@ -70,47 +104,132 @@ export function NotifyMeModal({ open, onClose, productId, productName }: Props) 
       const json = await res.json().catch(() => ({} as any));
 
       if (!res.ok) {
-        const msg =
-          (json && (json.message || json.error)) ||
-          "Nešto nije u redu. Pokušaj ponovo.";
+        const msg = (json && (json.message || json.error)) || "Nešto nije u redu. Pokušaj ponovo.";
         setStatus("err");
         setErrMsg(String(msg));
+
+        setShake(true);
+        window.setTimeout(() => setShake(false), 520);
         return;
       }
 
       setStatus("ok");
       setErrMsg(null);
 
-      // UX: zatvori brzo posle success-a
-      setTimeout(() => onClose(), 900);
+      setSuccessPulse(true);
+      window.setTimeout(() => setSuccessPulse(false), 900);
+
+      setTimeout(() => onClose(), AUTO_CLOSE_MS);
     } catch (e: any) {
       setStatus("err");
       setErrMsg(e?.message ? String(e.message) : "Network greška.");
+
+      setShake(true);
+      window.setTimeout(() => setShake(false), 520);
     }
   }
 
-  return (
-    <div className="fixed inset-0 z-[90]">
-      <button
-        type="button"
-        className="absolute inset-0 bg-black/40"
-        onClick={onClose}
-        aria-label="Zatvori"
-      />
+  const overlayCls = cx(
+    "fixed inset-0 z-[90] bg-black/60",
+    phase === "enter" ? "animate-micOverlayIn" : "animate-micOverlayOut"
+  );
 
-      <div className="absolute left-1/2 top-1/2 w-[92vw] max-w-[520px] -translate-x-1/2 -translate-y-1/2">
-        <div className="mic-card p-4 shadow-[0_24px_70px_rgba(0,0,0,0.25)]">
+  const panelWrapCls = "fixed inset-0 z-[91] flex items-center justify-center px-3";
+
+  const panelCls = cx(
+    "mic-card w-full max-w-[560px] p-5",
+    "shadow-[0_34px_110px_rgba(0,0,0,0.42)]",
+    "will-change-transform",
+    phase === "enter" ? "animate-micPanelIn" : "animate-micPanelOut",
+    shake && "animate-micShake",
+    successPulse && "animate-micSuccessPulse"
+  );
+
+  const labelCls = "text-[12px] font-semibold text-black/70";
+  const hintCls = "mt-1 text-[11px] mic-muted-2";
+
+  const inputFancy =
+    "mt-2 w-full rounded-xl border px-4 py-3 text-[13px] outline-none transition " +
+    "bg-[rgba(15,23,42,0.02)] text-[rgb(var(--text))] " +
+    "border-[rgb(var(--border))] " +
+    "placeholder:text-black/35 " +
+    "hover:bg-[rgba(15,23,42,0.03)] hover:border-[rgb(var(--border-strong))] " +
+    "focus:bg-white focus:border-[rgb(var(--border-strong))] focus:shadow-[0_0_0_4px_rgba(15,23,42,0.06)]";
+
+  const textareaFancy = cx(inputFancy, "min-h-[110px] resize-none");
+  const emailErrorInline = status !== "sending" && email.trim() !== "" && !emailOk;
+
+  // ✅ Close button: MIC-ish ghost (no border)
+  const closeBtn =
+    "inline-flex items-center justify-center rounded-xl px-4 " +
+    "h-9 text-[12px] font-semibold " +
+    "bg-black/[0.04] text-[rgb(var(--text))] " +
+    "shadow-[0_1px_0_rgba(15,23,42,0.06)] " +
+    "transition hover:bg-black/[0.06] hover:shadow-[0_6px_18px_rgba(15,23,42,0.10)] " +
+    "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-black/20 " +
+    "disabled:opacity-50 disabled:pointer-events-none";
+
+  return (
+    <>
+      <style>{`
+        @keyframes micOverlayIn { from { opacity: 0; } to { opacity: 1; } }
+        @keyframes micOverlayOut { from { opacity: 1; } to { opacity: 0; } }
+
+        @keyframes micPanelIn {
+          0%   { opacity: 0; transform: translateY(34px) scale(0.82); }
+          55%  { opacity: 1; transform: translateY(-10px) scale(1.06); }
+          78%  { opacity: 1; transform: translateY(0px)  scale(0.99); }
+          100% { opacity: 1; transform: translateY(0px)  scale(1.0); }
+        }
+
+        @keyframes micPanelOut {
+          from { opacity: 1; transform: translateY(0px) scale(1.0); }
+          to   { opacity: 0; transform: translateY(18px) scale(0.965); }
+        }
+
+        @keyframes micShake {
+          0% { transform: translateX(0); }
+          12% { transform: translateX(-6px); }
+          24% { transform: translateX(6px); }
+          36% { transform: translateX(-5px); }
+          48% { transform: translateX(5px); }
+          60% { transform: translateX(-3px); }
+          72% { transform: translateX(3px); }
+          84% { transform: translateX(-1px); }
+          100% { transform: translateX(0); }
+        }
+
+        @keyframes micSuccessPulse {
+          0% { box-shadow: 0 34px 110px rgba(0,0,0,0.42), 0 0 0 rgba(245,158,11,0); }
+          35% { box-shadow: 0 34px 110px rgba(0,0,0,0.42), 0 0 0 10px rgba(245,158,11,0.16); }
+          70% { box-shadow: 0 34px 110px rgba(0,0,0,0.42), 0 0 0 0px rgba(245,158,11,0.00); }
+          100% { box-shadow: 0 34px 110px rgba(0,0,0,0.42), 0 0 0 0px rgba(245,158,11,0.00); }
+        }
+
+        .animate-micOverlayIn { animation: micOverlayIn 170ms ease-out both; }
+        .animate-micOverlayOut { animation: micOverlayOut 260ms ease-in both; }
+
+        .animate-micPanelIn { animation: micPanelIn 460ms cubic-bezier(.16,1.05,.22,1.0) both; transform-origin: 50% 60%; }
+        .animate-micPanelOut { animation: micPanelOut ${EXIT_MS}ms cubic-bezier(.2,.8,.2,1) both; }
+
+        .animate-micShake { animation: micShake 520ms ease-in-out both; }
+        .animate-micSuccessPulse { animation: micSuccessPulse 900ms ease-out both; }
+      `}</style>
+
+      <button type="button" className={overlayCls} onClick={onClose} aria-label="Zatvori" />
+
+      <div className={panelWrapCls} role="dialog" aria-modal="true" aria-label="Obavesti me">
+        <div className={panelCls} onClick={(e) => e.stopPropagation()}>
           <div className="flex items-start justify-between gap-3">
             <div className="min-w-0">
               <div className="text-[13px] font-semibold">Obavesti me</div>
-              <div className="mt-1 text-[12px] mic-muted line-clamp-2">
-                {productName}
-              </div>
+              <div className="mt-1 text-[12px] mic-muted line-clamp-2">{productName}</div>
             </div>
 
+            {/* ✅ NO BORDER close button */}
             <button
               type="button"
-              className="mic-btn h-8 px-3 text-[12px]"
+              className={closeBtn}
               onClick={onClose}
               title="Zatvori"
               disabled={status === "sending"}
@@ -119,27 +238,32 @@ export function NotifyMeModal({ open, onClose, productId, productName }: Props) 
             </button>
           </div>
 
-          <div className="mt-3 grid gap-3">
+          <div className="mt-4 grid gap-4">
             <div>
-              <div className="text-[12px] font-semibold text-black/70">Email</div>
+              <div className={labelCls}>Email</div>
               <input
-                className="mic-input mt-1"
+                className={cx(
+                  inputFancy,
+                  emailErrorInline && "border-red-300 focus:shadow-[0_0_0_4px_rgba(239,68,68,0.12)]"
+                )}
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
-                placeholder="npr. pera@email.com"
+                placeholder="npr. ime@domen.com"
                 inputMode="email"
                 autoComplete="email"
                 disabled={status === "sending" || status === "ok"}
               />
+              <div className={hintCls}>Koristimo ga samo da te obavestimo kad proizvod bude dostupan.</div>
+              {emailErrorInline ? <div className="mt-1 text-[11px] text-red-600 font-semibold">Email nije validan.</div> : null}
             </div>
 
             <div>
-              <div className="text-[12px] font-semibold text-black/70">Telefon (opciono)</div>
+              <div className={labelCls}>Telefon (opciono)</div>
               <input
-                className="mic-input mt-1"
+                className={inputFancy}
                 value={phone}
                 onChange={(e) => setPhone(e.target.value)}
-                placeholder="npr. +3816..."
+                placeholder="npr. +381 60 123 456"
                 inputMode="tel"
                 autoComplete="tel"
                 disabled={status === "sending" || status === "ok"}
@@ -147,40 +271,32 @@ export function NotifyMeModal({ open, onClose, productId, productName }: Props) 
             </div>
 
             <div>
-              <div className="text-[12px] font-semibold text-black/70">Napomena (opciono)</div>
+              <div className={labelCls}>Napomena (opciono)</div>
               <textarea
-                className={cx("mic-input mt-1", "h-[88px] py-2")}
+                className={textareaFancy}
                 value={note}
                 onChange={(e) => setNote(e.target.value)}
-                placeholder="Ako imaš dodatni zahtev..."
+                placeholder="Npr. želim obaveštenje za 2 komada / preferiram Viber…"
                 disabled={status === "sending" || status === "ok"}
               />
             </div>
 
             {status === "err" && errMsg ? (
-              <div className="rounded-md border border-red-200 bg-red-50 p-2 text-[12px] text-red-700">
-                {errMsg}
-              </div>
+              <div className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-[12px] text-red-700">{errMsg}</div>
             ) : null}
 
             {status === "ok" ? (
-              <div className="rounded-md border border-emerald-200 bg-emerald-50 p-2 text-[12px] text-emerald-800">
+              <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-[12px] text-emerald-800">
                 Sačuvano ✅ Javićemo ti kada bude dostupno.
               </div>
             ) : null}
 
             <div className="flex items-center justify-between gap-3 pt-1">
-              <div className="text-[11px] mic-muted-2">
-                Unos ostaje samo za obaveštenje o dostupnosti.
-              </div>
+              <div className="text-[11px] mic-muted-2">Klikom na “Pošalji” čuvamo prijavu u bazi.</div>
 
               <button
                 type="button"
-                className={cx(
-                  canSend ? "mic-btn-primary" : "mic-btn",
-                  "h-9 px-4 text-[12px]",
-                  !canSend && "opacity-50"
-                )}
+                className={cx(canSend ? "mic-btn-primary" : "mic-btn", "h-10 px-5 text-[12px]", !canSend && "opacity-50")}
                 onClick={onSubmit}
                 disabled={!canSend}
               >
@@ -190,6 +306,6 @@ export function NotifyMeModal({ open, onClose, productId, productName }: Props) 
           </div>
         </div>
       </div>
-    </div>
+    </>
   );
 }

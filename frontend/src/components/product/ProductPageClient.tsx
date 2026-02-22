@@ -31,8 +31,22 @@ export default function ProductPageClient({ slug }: { slug: string }) {
   const q = useProduct(slug);
   const p = q.data as any;
 
+  // ✅ SVI HOOK-ovi moraju biti pre bilo kog "return"
   const [hydrated, setHydrated] = React.useState(false);
   React.useEffect(() => setHydrated(true), []);
+
+  const [idx, setIdx] = React.useState(0);
+  const [open, setOpen] = React.useState(false);
+
+  // ✅ notify modal state mora biti gore (da nema hook mismatch)
+  const [notifyOpen, setNotifyOpen] = React.useState(false);
+
+  // reset UI on slug change
+  React.useEffect(() => {
+    setIdx(0);
+    setOpen(false);
+    setNotifyOpen(false);
+  }, [slug]);
 
   const images = React.useMemo(() => {
     const arr = Array.isArray(p?.images) ? p!.images!.filter(Boolean) : [];
@@ -49,20 +63,11 @@ export default function ProductPageClient({ slug }: { slug: string }) {
     return out;
   }, [p?.images]);
 
-  const [idx, setIdx] = React.useState(0);
-  const [open, setOpen] = React.useState(false);
-
-  React.useEffect(() => {
-    setIdx(0);
-    setOpen(false);
-  }, [slug]);
-
   const canPrev = idx > 0;
   const canNext = idx < images.length - 1;
-
   const mainUrl = pickMain(images[idx]) ?? null;
 
-  // ESC / arrows
+  // ESC / arrows for lightbox
   React.useEffect(() => {
     if (!open) return;
 
@@ -76,6 +81,7 @@ export default function ProductPageClient({ slug }: { slug: string }) {
     return () => window.removeEventListener("keydown", onKey);
   }, [open, images.length]);
 
+  // ---- Tek sada uslovni renderi (posle svih hook-ova) ----
   if (q.isLoading) return <div className="mx-auto max-w-4xl px-4 py-6">Učitavam…</div>;
 
   if (q.error) {
@@ -91,6 +97,18 @@ export default function ProductPageClient({ slug }: { slug: string }) {
   if (!p) return <div className="mx-auto max-w-4xl px-4 py-6">Nema proizvoda.</div>;
 
   const pageTitle = `${p.name} — ${formatRSD(p.price_rsd)}`;
+
+  // ✅ stock logic (PRO)
+  const stockQty = toNumberOrNull(p.stock_qty) ?? 0;
+  const stockStatus = typeof p.stock_status === "string" ? p.stock_status : null;
+  const inStockBool = typeof p.in_stock === "boolean" ? p.in_stock : null;
+
+  const isOut =
+    stockQty <= 0 ||
+    stockStatus === "out_of_stock" ||
+    (stockStatus == null && inStockBool === false);
+
+  const productId = Number(p.id);
 
   const Lightbox = open ? (
     <div
@@ -162,20 +180,6 @@ export default function ProductPageClient({ slug }: { slug: string }) {
     </div>
   ) : null;
 
-  // ✅ stock logic (PRO)
-  const stockQty = toNumberOrNull(p.stock_qty) ?? 0;
-  const stockStatus = typeof p.stock_status === "string" ? p.stock_status : null;
-  const inStockBool = typeof p.in_stock === "boolean" ? p.in_stock : null;
-
-  const isOut =
-    stockQty <= 0 ||
-    stockStatus === "out_of_stock" ||
-    (stockStatus == null && inStockBool === false);
-
-  const productId = Number(p.id);
-
-  const [notifyOpen, setNotifyOpen] = React.useState(false);
-
   return (
     <div className="mx-auto w-full max-w-5xl px-4 py-6">
       <div className="text-xs text-black/50" title={`Slug: ${slug}`}>
@@ -246,7 +250,7 @@ export default function ProductPageClient({ slug }: { slug: string }) {
             {formatRSD(p.price_rsd)}
           </div>
 
-          {/* ✅ CTA block */}
+          {/* ✅ CTA */}
           <div className="mt-3 flex flex-wrap items-center gap-2">
             {isOut ? (
               <>
@@ -258,13 +262,10 @@ export default function ProductPageClient({ slug }: { slug: string }) {
                 >
                   Obavesti me
                 </button>
-                <div className="text-[12px] text-red-600 font-semibold">
-                  Proizvod nije dostupan
-                </div>
+                <div className="text-[12px] text-red-600 font-semibold">Proizvod nije dostupan</div>
               </>
             ) : (
               <>
-                {/* MVP cart CTA (možeš kasnije povezati na uiCart/addCart) */}
                 <button type="button" className="mic-btn-primary h-9 px-4 text-[12px]" title="Dodaj u korpu">
                   Dodaj u korpu
                 </button>
@@ -279,10 +280,10 @@ export default function ProductPageClient({ slug }: { slug: string }) {
         </div>
       </div>
 
-      {/* ✅ PORTAL */}
+      {/* Lightbox portal */}
       {hydrated && Lightbox ? createPortal(Lightbox, document.body) : null}
 
-      {/* ✅ Notify modal */}
+      {/* ✅ Notify modal (PRO) */}
       <NotifyMeModal
         open={notifyOpen}
         onClose={() => setNotifyOpen(false)}
