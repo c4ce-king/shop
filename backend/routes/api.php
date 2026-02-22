@@ -6,30 +6,30 @@ use Illuminate\Http\Request;
 use App\Http\Controllers\ShopApiController;
 use App\Http\Controllers\CatalogController;
 use App\Http\Controllers\StockAlertController;
+use App\Http\Controllers\AuthController;
 
 use App\Http\Controllers\Admin\ProductAdminController;
 use App\Http\Controllers\Admin\ProductImageAdminController;
 
 Route::get('/ping', fn () => response()->json(['ok' => true, 'app' => 'shop-backend']));
 
-// Search autocomplete sugestije
 Route::get('/pretraga/sugestije', [ShopApiController::class, 'sugestije']);
-
-// Kategorije tree (za mega meni)
 Route::get('/categories/tree', [CatalogController::class, 'categoriesTree']);
-
-// Resolve path -> category/product/home
 Route::get('/resolve', [CatalogController::class, 'resolve']);
-
-// Product endpoint (MVP za PDP)
 Route::get('/product/{slug}', [CatalogController::class, 'productBySlug']);
 
-// Category listing products (SEO slug path može biti dubok: parent/child/child)
 Route::get('category/{slug_path}/products', [CatalogController::class, 'categoryProducts'])
     ->where('slug_path', '.*');
 
-// ✅ Stock alert (PRO): notify me when available
-Route::post('/notify', [StockAlertController::class, 'create']);
+// ---- AUTH (Sanctum cookie SPA) ----
+Route::get('/auth/me', [AuthController::class, 'me']);
+Route::post('/auth/register', [AuthController::class, 'register']);
+Route::post('/auth/login', [AuthController::class, 'login']);
+Route::post('/auth/logout', [AuthController::class, 'logout']);
+
+// ---- STOCK ALERTS ----
+Route::get('/notify/status', [StockAlertController::class, 'status']);
+Route::post('/notify', [StockAlertController::class, 'create'])->middleware('auth:sanctum');
 
 // -------------------- ADMIN --------------------
 Route::middleware('admin.token')->prefix('admin')->group(function () {
@@ -46,7 +46,7 @@ Route::middleware('admin.token')->prefix('admin')->group(function () {
     Route::delete('/slike/{slikaId}', [ProductImageAdminController::class, 'obrisi']);
 });
 
-// -------------------- DEBUG (opciono) --------------------
+// DEBUG
 Route::post('/debug', function (Request $request) {
     return response()->json([
         'content_type' => $request->header('content-type'),
