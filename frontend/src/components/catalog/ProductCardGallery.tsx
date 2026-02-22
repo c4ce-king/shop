@@ -139,7 +139,6 @@ function StockLine({ p }: { p: ProductListingItem }) {
           ? "bg-red-600"
           : "bg-transparent";
 
-  // stabilan layout: uvek jedna linija
   return (
     <div className="min-h-[16px] flex items-center gap-1.5 text-[12px] leading-tight">
       <span className={cx("inline-block h-2 w-2 rounded-full", dotClass)} aria-hidden="true" />
@@ -177,23 +176,22 @@ export function ProductCardGallery({
   // ✅ samo "-xx%" (procenti ostaju na pill-u)
   const discountLabel = FORCE_SHOW_PILLS ? "-25%" : realPercent != null ? `-${realPercent}%` : null;
 
-  // pill bar je samo za popust (stock ide ispod cene)
   const showPillBar = !!discountLabel;
-
-  // dots podigni ako postoji pill da se ne preklapa
   const dotsBottomClass = showPillBar ? "bottom-8" : "bottom-2";
 
   const canPrev = active > 0;
   const canNext = active < gallery.length - 1;
 
+  // ✅ disable add-to-cart kada je OUT
+  const stockState: StockState = FORCE_SHOW_PILLS ? "low" : getStockState(p as any);
+  const disableCart = stockState === "out";
+
   return (
     <div className="mic-product-card group mic-card mic-card-hover relative overflow-hidden h-full flex flex-col">
       <div className="relative">
-        {/* Link samo oko slike */}
         <Link href={href} title={seoTitle} className="block">
           <div className="relative aspect-[4/3] w-full overflow-hidden bg-neutral-50">
             {activeSrc ? (
-              // eslint-disable-next-line @next/next/no-img-element
               <img
                 src={activeSrc}
                 alt={p.name}
@@ -207,12 +205,10 @@ export function ProductCardGallery({
           </div>
         </Link>
 
-        {/* Actions overlay IZVAN Link-a */}
         <div className="absolute right-2 top-2 z-50 pointer-events-auto opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity">
-          <ProductCardActions productId={productId} size="sm" variant="overlay" />
+          <ProductCardActions productId={productId} disableCart={disableCart} size="sm" variant="overlay" />
         </div>
 
-        {/* Pill bar na dnu slike (jedan red) — samo popust */}
         {showPillBar ? (
           <div className="absolute left-2 right-2 bottom-2 z-40 flex items-center justify-between gap-2 pointer-events-none">
             <div className="flex items-center gap-2 min-w-0">
@@ -222,12 +218,10 @@ export function ProductCardGallery({
                 </div>
               ) : null}
             </div>
-
             <div className="flex items-center gap-2" />
           </div>
         ) : null}
 
-        {/* MIC-like switching: chevrons + dots */}
         {gallery.length > 1 ? (
           <>
             <button

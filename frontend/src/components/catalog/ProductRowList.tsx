@@ -50,7 +50,6 @@ function safeSlugPath(slugPath: string) {
 type StockState = "in" | "low" | "out" | null;
 
 function getStockState(p: any): StockState {
-  // robust: prihvati number ili string iz API-ja
   const qtyRaw = p?.stock_qty;
   const qty =
     typeof qtyRaw === "number"
@@ -114,7 +113,6 @@ function StockLine({ p }: { p: ProductListingItem }) {
           ? "Proizvod nije dostupan"
           : null;
 
-  // ✅ low = ista žuta kao mic-chip-dot (rgb(var(--accent)))
   const textClass =
     state === "in"
       ? "text-emerald-600"
@@ -171,24 +169,22 @@ export function ProductRowList({
   const price = extractPrice(p);
   const realPercent = price.percentOff ?? null;
 
-  // ✅ percent ostaje na pill-u
   const discountLabel = DEBUG_FORCE_PILLS ? "-25%" : realPercent != null ? `-${realPercent}%` : null;
 
-  // pill overlay sada samo za popust
   const showPills = !!discountLabel;
-
-  // dots podigni kad postoji pill
   const dotsBottomClass = showPills ? "bottom-8" : "bottom-2";
+
+  // ✅ disable add-to-cart kada je OUT
+  const stockState: StockState = DEBUG_FORCE_PILLS ? "low" : getStockState(p as any);
+  const disableCart = stockState === "out";
 
   return (
     <div className="mic-product-card group mic-card mic-card-hover relative p-3">
       <div className="grid grid-cols-[104px_1fr] gap-3 sm:grid-cols-[132px_1fr] items-stretch">
-        {/* Media */}
         <Link href={href} title={seoTitle} className="block">
           <div className="relative aspect-square overflow-hidden rounded-md bg-neutral-50">
             {activeSrc ? (
               <>
-                {/* eslint-disable-next-line @next/next/no-img-element */}
                 <img
                   src={activeSrc}
                   alt={p.name}
@@ -199,7 +195,6 @@ export function ProductRowList({
 
                 <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/12 via-black/0 to-black/0 opacity-0 transition-opacity duration-200 group-hover:opacity-100" />
 
-                {/* Pills: dno slike (jedan red) — samo popust */}
                 {showPills ? (
                   <div className="absolute left-2 right-2 bottom-2 flex items-center justify-between gap-2 pointer-events-none">
                     <div className="flex items-center gap-2">
@@ -218,7 +213,6 @@ export function ProductRowList({
               <div className="flex h-full w-full items-center justify-center text-xs mic-muted">Nema</div>
             )}
 
-            {/* MIC-like image switching */}
             {gallery.length > 1 ? (
               <>
                 <button
@@ -272,7 +266,6 @@ export function ProductRowList({
           </div>
         </Link>
 
-        {/* Content */}
         <div className="flex min-w-0 flex-col justify-between min-h-[104px] sm:min-h-[132px]">
           <div className="flex min-w-0 flex-col gap-1.5 min-h-0">
             <Link href={href} title={seoTitle} className="block">
@@ -295,7 +288,7 @@ export function ProductRowList({
           </div>
 
           <div className="pt-2 mt-2 flex items-end justify-end border-t" style={{ borderColor: "rgb(var(--border))" }}>
-            <ProductCardActions productId={productId} size="sm" variant="inline" />
+            <ProductCardActions productId={productId} disableCart={disableCart} size="sm" variant="inline" />
           </div>
         </div>
       </div>

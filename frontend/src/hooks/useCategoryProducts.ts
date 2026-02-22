@@ -34,8 +34,18 @@ export type ProductListingItem = {
   id: number;
   name: string;
   slug: string;
-  price_rsd: number;
 
+  // pricing
+  price_rsd: number;
+  old_price_rsd?: number | null;
+  percent_off?: number | null;
+
+  // stock
+  in_stock?: boolean | null;
+  stock_qty?: number | string | null; // može doći kao string, FE već robust parsira
+  stock_status?: "in_stock" | "low_stock" | "out_of_stock" | string | null;
+
+  // images
   image_grid_url?: string | null;
   images?: ProductImageDTO[]; // normalized
 };
@@ -105,7 +115,7 @@ function toBackendParams(filters: ListingFilters): URLSearchParams {
   // sort
   if ((f as any).sort && (f as any).sort !== "podrazumevano") sp.set("sort", (f as any).sort);
 
-  // ✅ pagination: šalji UVEK (backend default ne sme da nas “prevari”)
+  // ✅ pagination: šalji UVEK
   const page = Math.max(1, Math.floor(Number((f as any).page ?? 1)));
   const per = Math.max(1, Math.floor(Number((f as any).perPage ?? 24)));
   sp.set("page", String(page));

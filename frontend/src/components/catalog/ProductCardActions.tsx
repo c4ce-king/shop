@@ -8,12 +8,23 @@ import { uiCart, useUiCart, type Id } from "../../store/uiCart";
 type Props = {
   productId: Id;
 
+  /** disables ALL actions */
   disabled?: boolean;
+
+  /** disables ONLY add-to-cart (out of stock) */
+  disableCart?: boolean;
+
   size?: "sm" | "md";
   variant?: "overlay" | "inline";
 };
 
-export function ProductCardActions({ productId, disabled = false, size = "md", variant = "inline" }: Props) {
+export function ProductCardActions({
+  productId,
+  disabled = false,
+  disableCart = false,
+  size = "md",
+  variant = "inline",
+}: Props) {
   const key = String(productId);
 
   const wishlisted = useUiCart((s) => s.wishlist.has(key));
@@ -39,14 +50,22 @@ export function ProductCardActions({ productId, disabled = false, size = "md", v
 
   const neutralIcon = "text-black/70 hover:text-black";
 
-  // ✅ Narandžasto PRIMARY (zakucano): koristi Tailwind !important + inline style fallback
-  // Tailwind: orange-500 / orange-600 (MIC-like, jasno, ali ne previše neon)
+  // ✅ Orange primary cart
   const cartBtn =
     "!bg-orange-500 !text-white " +
     "hover:!bg-orange-600 active:!bg-orange-600 " +
     "shadow-[0_10px_24px_rgba(0,0,0,0.16)]";
 
+  // ✅ Disabled cart (out of stock): MIC-ish gray
+  const cartBtnDisabled =
+    "!bg-black/25 !text-white " +
+    "hover:!bg-black/25 active:!bg-black/25 " +
+    "shadow-[0_6px_18px_rgba(0,0,0,0.10)]";
+
   const dot = "pointer-events-none absolute -right-0.5 -top-0.5 h-2 w-2 rounded-full bg-black";
+
+  const allDisabled = disabled;
+  const cartDisabled = disabled || disableCart;
 
   return (
     <div className={wrap}>
@@ -54,7 +73,7 @@ export function ProductCardActions({ productId, disabled = false, size = "md", v
         type="button"
         className={`${baseBtn} ${btnSize}`}
         onClick={() => uiCart.toggleWishlist(productId)}
-        disabled={disabled}
+        disabled={allDisabled}
         aria-label={wishlisted ? "Ukloni iz omiljenog" : "Dodaj u omiljeno"}
         title={wishlisted ? "Omiljeno: ukloni" : "Omiljeno"}
       >
@@ -66,7 +85,7 @@ export function ProductCardActions({ productId, disabled = false, size = "md", v
         type="button"
         className={`${baseBtn} ${btnSize}`}
         onClick={() => uiCart.toggleCompare(productId)}
-        disabled={disabled}
+        disabled={allDisabled}
         aria-label={compared ? "Ukloni iz poređenja" : "Uporedi"}
         title={compared ? "Upoređuješ" : "Uporedi"}
       >
@@ -76,12 +95,19 @@ export function ProductCardActions({ productId, disabled = false, size = "md", v
 
       <button
         type="button"
-        className={`${baseBtn} ${cartBtn} ${btnSize}`}
-        style={{ backgroundColor: "#F97316", color: "white" }} // fallback ako neki global CSS gazi utility klase
-        onClick={() => uiCart.addCart(productId)}
-        disabled={disabled}
-        aria-label={inCart ? "U korpi" : "Dodaj u korpu"}
-        title={inCart ? "U korpi" : "Dodaj u korpu"}
+        className={`${baseBtn} ${cartDisabled ? cartBtnDisabled : cartBtn} ${btnSize}`}
+        style={
+          cartDisabled
+            ? { backgroundColor: "rgba(0,0,0,0.25)", color: "white" }
+            : { backgroundColor: "#F97316", color: "white" } // fallback ako neki global CSS gazi utility klase
+        }
+        onClick={() => {
+          if (cartDisabled) return;
+          uiCart.addCart(productId);
+        }}
+        disabled={cartDisabled}
+        aria-label={cartDisabled ? "Proizvod nije dostupan" : inCart ? "U korpi" : "Dodaj u korpu"}
+        title={cartDisabled ? "Proizvod nije dostupan" : inCart ? "U korpi" : "Dodaj u korpu"}
       >
         <ShoppingCart size={iconSize} className="text-white" strokeWidth={2} />
       </button>
