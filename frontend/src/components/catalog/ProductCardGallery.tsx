@@ -10,10 +10,10 @@ import { ProductCardActions } from "@/components/catalog/ProductCardActions";
 import { extractPrice, formatRSD } from "./price";
 
 /**
- * ✅ FORCE (samo za test da se promene vide):
- * Kad potvrdiš da vidiš pillove, prebaci na false.
+ * Debug switch: ostavi false.
+ * (Ako ikad misliš da se CSS/UI ne refresuje, privremeno stavi true.)
  */
-const FORCE_SHOW_PILLS = true;
+const FORCE_SHOW_PILLS = false;
 
 function cx(...classes: Array<string | false | null | undefined>) {
   return classes.filter(Boolean).join(" ");
@@ -55,11 +55,17 @@ function PriceStack({ p }: { p: ProductListingItem }) {
   const price = extractPrice(p);
 
   if (price.current == null) {
-    return <div className="text-xs mic-muted">Cena na upit</div>;
+    // rezerviši visinu da “Isporuka” ne skače
+    return (
+      <div className="flex flex-col min-h-[38px] justify-start">
+        <div className="text-xs mic-muted">Cena na upit</div>
+        <div className="text-[12px] opacity-0 select-none">x</div>
+      </div>
+    );
   }
 
   return (
-    <div className="flex flex-col">
+    <div className="flex flex-col min-h-[38px] justify-start">
       <div className="text-[15px] font-semibold tracking-tight text-neutral-900 tabular-nums leading-tight">
         {formatRSD(price.current)}
       </div>
@@ -68,9 +74,30 @@ function PriceStack({ p }: { p: ProductListingItem }) {
         <div className="mt-0.5 text-[12px] mic-muted line-through tabular-nums leading-tight">
           {formatRSD(price.old)}
         </div>
-      ) : null}
+      ) : (
+        // placeholder linija da isporuka bude u istoj ravni i kad nema popusta
+        <div className="mt-0.5 text-[12px] opacity-0 select-none leading-tight">x</div>
+      )}
     </div>
   );
+}
+
+type StockState = "in" | "low" | "out" | null;
+
+function getStockState(p: any): StockState {
+  const qty = typeof p?.stock_qty === "number" ? p.stock_qty : null;
+  const inStockBool = typeof p?.in_stock === "boolean" ? p.in_stock : null;
+
+  if (qty != null) {
+    if (qty <= 0) return "out";
+    if (qty < 3) return "low";
+    return "in";
+  }
+
+  if (inStockBool === false) return "out";
+  if (inStockBool === true) return "in";
+
+  return null;
 }
 
 export function ProductCardGallery({
@@ -98,124 +125,131 @@ export function ProductCardGallery({
 
   const price = extractPrice(p);
   const realPercent = price.percentOff ?? null;
-  const realIsSale = !!(p as any).is_sale || price.old != null || realPercent != null;
 
-  // ✅ Force prikaz (da se promene MORAJU videti)
-  const saleLabel = FORCE_SHOW_PILLS
-    ? "Akcija -25%"
-    : realIsSale
-      ? realPercent != null
-        ? `Akcija -${realPercent}%`
-        : "Akcija"
-      : null;
+  // samo "-xx%" (bez "Akcija")
+  const discountLabel = FORCE_SHOW_PILLS ? "-25%" : realPercent != null ? `-${realPercent}%` : null;
 
-  const showStock = FORCE_SHOW_PILLS ? true : false; // za sad samo test
+  const stockState: StockState = FORCE_SHOW_PILLS ? "in" : getStockState(p as any);
+
+  const stockLabel =
+    stockState === "in" ? "Na stanju" : stockState === "low" ? "Pri kraju zaliha" : stockState === "out" ? "Nema na stanju" : null;
+
+  const stockClass =
+    stockState === "in"
+      ? "bg-emerald-500"
+      : stockState === "low"
+        ? "bg-orange-500"
+        : stockState === "out"
+          ? "bg-red-700"
+          : "";
 
   const canPrev = active > 0;
   const canNext = active < gallery.length - 1;
 
+  const showPillBar = !!discountLabel || !!stockLabel;
+
+  // dots podigni ako postoje pillovi da se ne preklapaju
+  const dotsBottomClass = showPillBar ? "bottom-8" : "bottom-2";
+
   return (
     <div className="mic-product-card group mic-card mic-card-hover relative overflow-hidden h-full flex flex-col">
-      <Link href={href} title={seoTitle} className="block">
-        <div className="relative aspect-[4/3] w-full overflow-hidden bg-neutral-50">
-          {activeSrc ? (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img
-              src={activeSrc}
-              alt={p.name}
-              title={seoTitle}
-              className="h-full w-full object-cover object-center transition-transform duration-300 group-hover:scale-[1.04]"
-              loading="lazy"
-            />
-          ) : (
-            <div className="flex h-full w-full items-center justify-center text-sm mic-muted">Nema slike</div>
-          )}
-
-          <div className="absolute right-2 top-2 z-10">
-            <ProductCardActions productId={productId} size="sm" variant="overlay" />
+      <div className="relative">
+        {/* Link samo oko slike */}
+        <Link href={href} title={seoTitle} className="block">
+          <div className="relative aspect-[4/3] w-full overflow-hidden bg-neutral-50">
+            {activeSrc ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img
+                src={activeSrc}
+                alt={p.name}
+                title={seoTitle}
+                className="h-full w-full object-cover object-center transition-transform duration-300 group-hover:scale-[1.04]"
+                loading="lazy"
+              />
+            ) : (
+              <div className="flex h-full w-full items-center justify-center text-sm mic-muted">Nema slike</div>
+            )}
           </div>
+        </Link>
 
-          {/* ✅ Akcija gore levo */}
-          {saleLabel ? (
-            <div className="absolute left-2 top-2 z-10">
-              <div className="rounded-full bg-red-600 px-2 py-1 text-xs font-extrabold text-white shadow leading-none">
-                {saleLabel}
-              </div>
-            </div>
-          ) : null}
-
-          {/* ✅ Na stanju dole levo */}
-          {showStock ? (
-            <div className="absolute left-2 bottom-2 z-10">
-              <div className="rounded-full bg-emerald-500 px-2 py-1 text-xs font-semibold text-white shadow leading-none">
-                Na stanju
-              </div>
-            </div>
-          ) : null}
-
-          {gallery.length > 1 ? (
-            <>
-              <button
-                type="button"
-                disabled={!canPrev}
-                onClick={(e) => {
-                  e.preventDefault();
-                  e.stopPropagation();
-                  setActive((x) => Math.max(0, x - 1));
-                }}
-                className={cx(
-                  "absolute left-2 top-1/2 -translate-y-1/2 rounded-full bg-white/95 p-1 shadow",
-                  "opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity",
-                  "disabled:opacity-40"
-                )}
-                aria-label="Prethodna slika"
-                title="Prethodna slika"
-              >
-                <ChevronLeft className="h-4 w-4" />
-              </button>
-
-              <button
-                type="button"
-                disabled={!canNext}
-                onClick={(e) => {
-                  e.preventDefault();
-                  e.stopPropagation();
-                  setActive((x) => Math.min(gallery.length - 1, x + 1));
-                }}
-                className={cx(
-                  "absolute right-2 top-1/2 -translate-y-1/2 rounded-full bg-white/95 p-1 shadow",
-                  "opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity",
-                  "disabled:opacity-40"
-                )}
-                aria-label="Sledeća slika"
-                title="Sledeća slika"
-              >
-                <ChevronRight className="h-4 w-4" />
-              </button>
-
-              <div className="absolute bottom-2 left-0 right-0 flex items-center justify-center gap-1.5 px-2">
-                {gallery.map((g, i) => (
-                  <button
-                    key={`${g.thumb}-${i}`}
-                    type="button"
-                    onClick={(e) => {
-                      e.preventDefault();
-                      e.stopPropagation();
-                      setActive(i);
-                    }}
-                    className={cx(
-                      "h-1.5 w-1.5 rounded-full transition",
-                      i === active ? "bg-black" : "bg-black/30 hover:bg-black/60"
-                    )}
-                    aria-label={`Slika ${i + 1}`}
-                    title={`Slika ${i + 1}`}
-                  />
-                ))}
-              </div>
-            </>
-          ) : null}
+        {/* Actions overlay IZVAN Link-a */}
+        <div className="absolute right-2 top-2 z-50 pointer-events-auto opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity">
+          <ProductCardActions productId={productId} size="sm" variant="overlay" />
         </div>
-      </Link>
+
+        {/* Pill bar na dnu slike (jedan red) */}
+        {showPillBar ? (
+          <div className="absolute left-2 right-2 bottom-2 z-40 flex items-center justify-between gap-2 pointer-events-none">
+            <div className="flex items-center gap-2 min-w-0">
+              {discountLabel ? (
+                <div className="rounded-full bg-red-600 px-2 py-1 text-xs font-extrabold text-white shadow leading-none">
+                  {discountLabel}
+                </div>
+              ) : null}
+            </div>
+
+            <div className="flex items-center gap-2">
+              {stockLabel ? (
+                <div className={cx("rounded-full px-2 py-1 text-xs font-semibold text-white shadow leading-none", stockClass)}>
+                  {stockLabel}
+                </div>
+              ) : null}
+            </div>
+          </div>
+        ) : null}
+
+        {/* MIC-like switching: chevrons + dots */}
+        {gallery.length > 1 ? (
+          <>
+            <button
+              type="button"
+              disabled={!canPrev}
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                setActive((x) => Math.max(0, x - 1));
+              }}
+              className={cx(
+                "absolute left-2 top-1/2 -translate-y-1/2 z-40 pointer-events-auto rounded-full bg-white/95 p-1 shadow",
+                "opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity",
+                "disabled:opacity-40"
+              )}
+              aria-label="Prethodna slika"
+              title="Prethodna slika"
+            >
+              <ChevronLeft className="h-4 w-4" />
+            </button>
+
+            <button
+              type="button"
+              disabled={!canNext}
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                setActive((x) => Math.min(gallery.length - 1, x + 1));
+              }}
+              className={cx(
+                "absolute right-2 top-1/2 -translate-y-1/2 z-40 pointer-events-auto rounded-full bg-white/95 p-1 shadow",
+                "opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity",
+                "disabled:opacity-40"
+              )}
+              aria-label="Sledeća slika"
+              title="Sledeća slika"
+            >
+              <ChevronRight className="h-4 w-4" />
+            </button>
+
+            <div className={cx("absolute left-0 right-0 z-30 flex items-center justify-center gap-1.5 px-2 pointer-events-none", dotsBottomClass)}>
+              {gallery.map((g, i) => (
+                <span
+                  key={`${g.thumb}-${i}`}
+                  className={cx("h-1.5 w-1.5 rounded-full transition", i === active ? "bg-black" : "bg-black/30")}
+                />
+              ))}
+            </div>
+          </>
+        ) : null}
+      </div>
 
       <div className="flex flex-1 flex-col gap-2.5 p-3">
         <Link href={href} title={seoTitle} className="block">
@@ -224,7 +258,6 @@ export function ProductCardGallery({
           </div>
         </Link>
 
-        {/* ✅ nova cena + stara ispod precrtana */}
         <PriceStack p={p} />
 
         <div className="grid gap-1 text-xs mic-muted">

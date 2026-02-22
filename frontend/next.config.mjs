@@ -8,7 +8,7 @@ const backend = stripTrailingSlash(process.env.BACKEND_URL || "http://127.0.0.1:
 const nextConfig = {
   reactStrictMode: true,
 
-  // ✅ rešava "Blocked cross-origin request from 127.0.0.1 to /_next/*"
+  // ✅ Fix za: Blocked cross-origin request from 127.0.0.1 to /_next/*
   allowedDevOrigins: [
     "http://localhost:3000",
     "http://127.0.0.1:3000",

@@ -42,6 +42,45 @@ class CatalogController extends Controller
         return $out;
     }
 
+    private function calcPercentOff(?int $old, ?int $cur): ?int
+    {
+        if ($old === null || $cur === null) return null;
+        if ($old <= 0) return null;
+        if ($cur >= $old) return null;
+        $pct = (int)round((1 - ($cur / $old)) * 100);
+        return $pct > 0 ? $pct : null;
+    }
+
+    /**
+     * ✅ MP discount rules:
+     * - if mp_discount_active = 1:
+     *    - prefer fixed discount (mp_discount_fixed_rsd) if > 0
+     *    - else percent discount (mp_discount_percent) if > 0
+     * - clamp current >= 0
+     */
+    private function applyMpDiscount(int $regular, $active, $pct, $fixed): ?int
+    {
+        $isActive = false;
+        if (is_bool($active)) $isActive = $active;
+        elseif ($active !== null) $isActive = ((int)$active) === 1;
+
+        if (!$isActive) return null;
+
+        $fixedN = ($fixed !== null && is_numeric($fixed)) ? (int)$fixed : 0;
+        if ($fixedN > 0) {
+            $cur = $regular - $fixedN;
+            return max(0, $cur);
+        }
+
+        $pctN = ($pct !== null && is_numeric($pct)) ? (float)$pct : 0.0;
+        if ($pctN > 0) {
+            $cur = (int)round($regular * (1.0 - ($pctN / 100.0)));
+            return max(0, $cur);
+        }
+
+        return null;
+    }
+
     // --------------------------
     // LISTING
     // --------------------------
@@ -71,8 +110,6 @@ class CatalogController extends Controller
         $descendantIds = array_values(array_unique(array_merge([(int)$category->id], array_map('intval', $descendantIds))));
 
         // 2) Fallback: slug_path prefix (if closure missing / incomplete)
-        // If closure exists but is not populated properly, we still want the full branch.
-        // We only do this when we don't see any real expansion beyond self.
         if (count($descendantIds) <= 1) {
             $prefix = rtrim((string)$category->slug_path, '/');
             if ($prefix !== '') {
@@ -87,7 +124,6 @@ class CatalogController extends Controller
             }
         }
 
-        // If still empty for any reason, fallback to self
         if (empty($descendantIds)) $descendantIds = [(int)$category->id];
 
         // Base query: products in branch
@@ -145,7 +181,7 @@ class CatalogController extends Controller
         }
 
         $applyAllFilters = function ($q, ?string $excludeCode = null) use ($selected, $min, $max, $brandIdsSelected) {
-            // Price
+            // Price (filters on REGULAR price_rsd for now; can be extended later to discounted)
             if ($excludeCode !== 'price' && Schema::hasColumn('products', 'price_rsd')) {
                 if ($min !== null && is_numeric($min)) $q->where('products.price_rsd', '>=', (int)$min);
                 if ($max !== null && is_numeric($max)) $q->where('products.price_rsd', '<=', (int)$max);
@@ -180,7 +216,7 @@ class CatalogController extends Controller
         $q = clone $base;
         $q = $applyAllFilters($q);
 
-        // SORT
+        // SORT (still by regular price_rsd, consistent with existing behavior)
         if ($sort === 'cena_gore' && Schema::hasColumn('products', 'price_rsd')) {
             $q->orderBy('products.price_rsd', 'asc')->orderBy('products.id', 'desc');
         } elseif ($sort === 'cena_dole' && Schema::hasColumn('products', 'price_rsd')) {
@@ -211,19 +247,33 @@ class CatalogController extends Controller
         $priceCol = Schema::hasColumn('products', 'price_rsd') ? 'price_rsd' : (Schema::hasColumn('products', 'price') ? 'price' : null);
         $imgCol = Schema::hasColumn('products', 'image_grid_url') ? 'image_grid_url' : (Schema::hasColumn('products', 'main_image_url') ? 'main_image_url' : null);
 
-        // --- IMAGES: fetch up to 5 images per product in ONE query (original + webp variants) ---
+        // MP discount columns (known from schema)
+        $mpDiscActiveCol = Schema::hasColumn('products', 'mp_discount_active') ? 'mp_discount_active' : null;
+        $mpDiscPctCol = Schema::hasColumn('products', 'mp_discount_percent') ? 'mp_discount_percent' : null;
+        $mpDiscFixedCol = Schema::hasColumn('products', 'mp_discount_fixed_rsd') ? 'mp_discount_fixed_rsd' : null;
+
+        // Old/compare & stock/sale flags
+        $compareCol = Schema::hasColumn('products', 'compare_at_rsd') ? 'compare_at_rsd' : null;
+        $isSaleCol = Schema::hasColumn('products', 'is_on_sale') ? 'is_on_sale' : null;
+        $inStockCol = Schema::hasColumn('products', 'in_stock') ? 'in_stock' : null;
+
+        // ✅ NEW: stock qty (optional, can be null if column doesn't exist)
+        $stockQtyCol = Schema::hasColumn('products', 'stock_qty') ? 'stock_qty' : null;
+
+        // --- IMAGES: fetch up to 5 images per product in ONE query ---
         $productIds = $rows->pluck('id')->all();
         $imagesByProduct = $this->fetchImagesForProducts($productIds, 5);
 
-        $products = $rows->map(function ($p) use ($nameCol, $slugCol, $priceCol, $imgCol, $imagesByProduct) {
+        $products = $rows->map(function ($p) use (
+            $nameCol, $slugCol, $priceCol, $imgCol, $imagesByProduct,
+            $mpDiscActiveCol, $mpDiscPctCol, $mpDiscFixedCol,
+            $compareCol, $isSaleCol, $inStockCol, $stockQtyCol
+        ) {
             $pid = (int)$p->id;
 
-            // Legacy/main fallback column on products table
             $main = $imgCol ? ($p->{$imgCol} ?? null) : null;
-
             $imgs = $imagesByProduct[$pid] ?? [];
 
-            // If no product_images exist, fallback to main_image_url as a single image (best-effort)
             if (empty($imgs) && $main) {
                 $fallbackUrl = ProductImageProcessor::toPublicUrl((string)$main);
                 $imgs = [[
@@ -237,24 +287,90 @@ class CatalogController extends Controller
                 ]];
             }
 
-            // Primary image for listing: prefer first image grid, else main
             $primaryGrid = null;
             if (!empty($imgs)) {
                 $primaryGrid = $imgs[0]['grid'] ?? $imgs[0]['thumb'] ?? $imgs[0]['original'] ?? null;
             }
             if (!$primaryGrid && $main) $primaryGrid = ProductImageProcessor::toPublicUrl((string)$main);
 
+            $regular = $priceCol ? (int)($p->{$priceCol} ?? 0) : 0;
+
+            $discActive = $mpDiscActiveCol ? ($p->{$mpDiscActiveCol} ?? null) : null;
+            $discPct = $mpDiscPctCol ? ($p->{$mpDiscPctCol} ?? null) : null;
+            $discFixed = $mpDiscFixedCol ? ($p->{$mpDiscFixedCol} ?? null) : null;
+
+            $compare = null;
+            if ($compareCol) {
+                $v = $p->{$compareCol} ?? null;
+                if ($v !== null && is_numeric($v)) $compare = (int)$v;
+            }
+
+            // current from mp_discount if active
+            $currentFromMp = $this->applyMpDiscount($regular, $discActive, $discPct, $discFixed);
+
+            $current = $regular;
+            $old = null;
+
+            if ($currentFromMp !== null && $currentFromMp > 0 && $regular > 0 && $currentFromMp < $regular) {
+                $current = $currentFromMp;
+
+                // old: prefer compare_at if it exists and is higher than regular (true MSRP), else regular
+                if ($compare !== null && $compare > $regular) $old = $compare;
+                else $old = $regular;
+            } else {
+                // no mp discount => compare_at can act as old (if higher than regular)
+                $current = $regular;
+                if ($compare !== null && $compare > $current) $old = $compare;
+            }
+
+            if ($old !== null && $old <= $current) $old = null;
+
+            $percent = $this->calcPercentOff($old, $current);
+
+            $isSale = null;
+            if ($isSaleCol) {
+                $isSale = (bool)($p->{$isSaleCol} ?? false);
+            } else {
+                $isSale = $percent !== null;
+            }
+
+            $inStock = null;
+            if ($inStockCol) {
+                $inStock = (bool)($p->{$inStockCol} ?? false);
+            }
+
+            // ✅ NEW: stock_qty (nullable)
+            $stockQty = null;
+            if ($stockQtyCol) {
+                $v = $p->{$stockQtyCol} ?? null;
+                if ($v !== null && is_numeric($v)) $stockQty = (int)$v;
+            }
+
             return [
                 'id' => $p->id,
                 'name' => $nameCol ? ($p->{$nameCol} ?? '') : '',
                 'slug' => $slugCol ? ($p->{$slugCol} ?? (string)$p->id) : (string)$p->id,
-                'price_rsd' => $priceCol ? (int)($p->{$priceCol} ?? 0) : 0,
 
-                // For old code paths (cards that expect a single image)
+                // ✅ current price that FE shows
+                'price_rsd' => $current,
+
+                // ✅ old/percent for crossed-out + pill
+                'old_price_rsd' => $old,
+                'percent_off' => $percent,
+
+                'is_sale' => $isSale,
+                'in_stock' => $inStock,
+
+                // ✅ NEW: used by FE for "Pri kraju" logic
+                'stock_qty' => $stockQty,
+
                 'image_grid_url' => $primaryGrid,
-
-                // NEW: full mini gallery objects for list view
                 'images' => $imgs,
+
+                // optional debug/telemetry (safe)
+                'price_regular_rsd' => $regular,
+                'price_mp_discounted_rsd' => $currentFromMp,
+                'compare_at_rsd' => $compare,
             ];
         })->values();
 
@@ -353,7 +469,6 @@ class CatalogController extends Controller
             ];
         }
 
-        // ✅ Optional debug (only when requested)
         $debug = (string)$request->query('debug', '') === '1';
 
         return response()->json([
@@ -377,6 +492,13 @@ class CatalogController extends Controller
                 'category_id' => (int)$category->id,
                 'descendant_ids_count' => count($descendantIds),
                 'descendant_ids_sample' => array_slice($descendantIds, 0, 20),
+                'mp_discount_cols' => [
+                    'active' => $mpDiscActiveCol,
+                    'percent' => $mpDiscPctCol,
+                    'fixed' => $mpDiscFixedCol,
+                ],
+                'compare_col' => $compareCol,
+                'stock_qty_col' => $stockQtyCol,
             ] : null,
         ]);
     }
@@ -395,10 +517,36 @@ class CatalogController extends Controller
         $nameCol = Schema::hasColumn('products', 'name') ? 'name' : (Schema::hasColumn('products', 'title') ? 'title' : null);
         $priceCol = Schema::hasColumn('products', 'price_rsd') ? 'price_rsd' : (Schema::hasColumn('products', 'price') ? 'price' : null);
 
+        $regular = $priceCol ? (int)($p->{$priceCol} ?? 0) : 0;
+
+        $compare = Schema::hasColumn('products', 'compare_at_rsd') && isset($p->compare_at_rsd) ? (int)$p->compare_at_rsd : null;
+
+        $currentFromMp = $this->applyMpDiscount(
+            $regular,
+            Schema::hasColumn('products', 'mp_discount_active') ? ($p->mp_discount_active ?? null) : null,
+            Schema::hasColumn('products', 'mp_discount_percent') ? ($p->mp_discount_percent ?? null) : null,
+            Schema::hasColumn('products', 'mp_discount_fixed_rsd') ? ($p->mp_discount_fixed_rsd ?? null) : null
+        );
+
+        $current = $regular;
+        $old = null;
+
+        if ($currentFromMp !== null && $currentFromMp > 0 && $currentFromMp < $regular) {
+            $current = $currentFromMp;
+            if ($compare !== null && $compare > $regular) $old = $compare;
+            else $old = $regular;
+        } else {
+            $current = $regular;
+            if ($compare !== null && $compare > $current) $old = $compare;
+        }
+
+        if ($old !== null && $old <= $current) $old = null;
+
+        $percent = $this->calcPercentOff($old, $current);
+
         $imagesByProduct = $this->fetchImagesForProducts([(int)$p->id], 30);
         $imgs = $imagesByProduct[(int)$p->id] ?? [];
 
-        // (MVP) category slug_path za breadcrumbs: uzmi jednu kategoriju (najpliÄ‡a ili prva)
         $categorySlugPath = null;
         if (Schema::hasTable('category_product') && Schema::hasTable('categories')) {
             $categorySlugPath = DB::table('category_product as cp')
@@ -409,15 +557,28 @@ class CatalogController extends Controller
                 ->value('c.slug_path');
         }
 
+        // ✅ NEW: stock qty on PDP too (nullable)
+        $stockQty = null;
+        if (Schema::hasColumn('products', 'stock_qty') && isset($p->stock_qty) && is_numeric($p->stock_qty)) {
+            $stockQty = (int)$p->stock_qty;
+        }
+
         return response()->json([
             'id' => (int)$p->id,
             'slug' => (string)$p->slug,
             'name' => $nameCol ? (string)($p->{$nameCol} ?? '') : '',
-            'price_rsd' => $priceCol ? (int)($p->{$priceCol} ?? 0) : 0,
+
+            'price_rsd' => $current,
+            'old_price_rsd' => $old,
+            'percent_off' => $percent,
+
+            'in_stock' => Schema::hasColumn('products', 'in_stock') ? (bool)($p->in_stock ?? false) : null,
+            'stock_qty' => $stockQty,
+
             'category_slug_path' => $categorySlugPath,
             'images' => $imgs,
             'meta' => [
-                'seo_title' => null, // FE moÅ¾e da setuje: "{name} â€“ {price} | Shop"
+                'seo_title' => null,
             ],
         ]);
     }
@@ -430,7 +591,6 @@ class CatalogController extends Controller
         $path = trim((string)$request->query('path', ''), "/");
         if ($path === '') return response()->json(['type' => 'home'], 200);
 
-        // 1) Ako je exact category slug_path
         $cat = DB::table('categories')->where('slug_path', $path)->where('is_active', 1)->first();
         if ($cat) {
             return response()->json([
@@ -440,13 +600,11 @@ class CatalogController extends Controller
             ], 200);
         }
 
-        // 2) InaÄe tretiraj poslednji segment kao product slug (MVP)
         $parts = explode('/', $path);
         $last = trim((string)end($parts));
         if ($last !== '' && Schema::hasColumn('products', 'slug')) {
             $prod = DB::table('products')->where('slug', $last)->first(['id', 'slug']);
             if ($prod) {
-                // pokuÅ¡a da naÄ‘e category slug_path kao prefix (ako postoji)
                 $prefix = implode('/', array_slice($parts, 0, -1));
                 $prefixCat = null;
                 if ($prefix !== '') {
@@ -534,7 +692,7 @@ class CatalogController extends Controller
 
     private function fetchImagesForProducts(array $productIds, int $limitPerProduct = 5): array
     {
-        $imagesByProduct = []; // pid => [dto...]
+        $imagesByProduct = [];
 
         if (empty($productIds) || !Schema::hasTable('product_images')) return $imagesByProduct;
 

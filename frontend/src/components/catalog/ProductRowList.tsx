@@ -9,11 +9,7 @@ import { buildProductTitle } from "@/lib/site";
 import { ProductCardActions } from "@/components/catalog/ProductCardActions";
 import { extractPrice, formatRSD } from "./price";
 
-/**
- * ✅ DEBUG: stavi na false kad potvrdiš da vidiš pillove.
- * Dok je true, uvek ćeš videti "Akcija", "-25%" i "Na stanju" na slici.
- */
-const DEBUG_FORCE_PILLS = true;
+const DEBUG_FORCE_PILLS = false;
 
 function cx(...classes: Array<string | false | null | undefined>) {
   return classes.filter(Boolean).join(" ");
@@ -51,36 +47,20 @@ function safeSlugPath(slugPath: string) {
   return s.length ? s : "";
 }
 
-function isInStock(p: ProductListingItem): boolean | null {
-  const anyP: any = p;
-  const b = (v: any) => (typeof v === "boolean" ? v : null);
+type StockState = "in" | "low" | "out" | null;
 
-  const direct =
-    b(anyP.in_stock) ??
-    b(anyP.is_in_stock) ??
-    b(anyP.available) ??
-    b(anyP.is_available) ??
-    b(anyP.isAvailable);
+function getStockState(p: any): StockState {
+  const qty = typeof p?.stock_qty === "number" ? p.stock_qty : null;
+  const inStockBool = typeof p?.in_stock === "boolean" ? p.in_stock : null;
 
-  if (direct != null) return direct;
-
-  const qty = anyP.stock_qty ?? anyP.qty ?? anyP.quantity ?? anyP.inventory ?? anyP.stock ?? null;
-  if (typeof qty === "number") return qty > 0;
-
-  const st: string | null =
-    typeof anyP.stock_status === "string"
-      ? anyP.stock_status
-      : typeof anyP.availability === "string"
-        ? anyP.availability
-        : null;
-
-  if (st) {
-    const s = st.toLowerCase();
-    if (s.includes("in_stock") || s.includes("instock") || s.includes("available") || s.includes("na stanju"))
-      return true;
-    if (s.includes("out_of_stock") || s.includes("unavailable") || s.includes("nema") || s.includes("rasprodato"))
-      return false;
+  if (qty != null) {
+    if (qty <= 0) return "out";
+    if (qty < 3) return "low";
+    return "in";
   }
+
+  if (inStockBool === false) return "out";
+  if (inStockBool === true) return "in";
 
   return null;
 }
@@ -89,25 +69,27 @@ function PriceBlock({ p }: { p: ProductListingItem }) {
   const price = extractPrice(p);
 
   if (price.current == null) {
-    return <div className="text-xs mic-muted">Cena na upit</div>;
+    return (
+      <div className="flex flex-col min-h-[38px] justify-start">
+        <div className="text-xs mic-muted">Cena na upit</div>
+        <div className="text-[12px] opacity-0 select-none">x</div>
+      </div>
+    );
   }
 
   return (
-    <div className="flex items-baseline gap-2">
-      <div className="text-[15px] font-semibold tracking-tight text-neutral-900 tabular-nums">
+    <div className="flex flex-col min-h-[38px] justify-start">
+      <div className="text-[15px] font-semibold tracking-tight text-neutral-900 tabular-nums leading-tight">
         {formatRSD(price.current)}
       </div>
 
       {price.old != null ? (
-        <>
-          <div className="text-[12px] mic-muted line-through tabular-nums">{formatRSD(price.old)}</div>
-          {price.percentOff != null ? (
-            <div className="rounded-full bg-black px-2 py-0.5 text-[11px] font-semibold text-white">
-              -{price.percentOff}%
-            </div>
-          ) : null}
-        </>
-      ) : null}
+        <div className="mt-0.5 text-[12px] mic-muted line-through tabular-nums leading-tight">
+          {formatRSD(price.old)}
+        </div>
+      ) : (
+        <div className="mt-0.5 text-[12px] opacity-0 select-none leading-tight">x</div>
+      )}
     </div>
   );
 }
@@ -140,16 +122,27 @@ export function ProductRowList({
   const productId = ((p as any).id ?? (p as any).product_id) as string | number;
 
   const price = extractPrice(p);
-  const realIsSale = !!(p as any).is_sale || price.old != null;
   const realPercent = price.percentOff ?? null;
 
-  const stock = isInStock(p);
-  const realShowStock = stock === true;
+  const discountLabel = DEBUG_FORCE_PILLS ? "-25%" : realPercent != null ? `-${realPercent}%` : null;
 
-  // ✅ DEBUG override (da sigurno vidiš promenu)
-  const isSale = DEBUG_FORCE_PILLS ? true : realIsSale;
-  const percent = DEBUG_FORCE_PILLS ? 25 : realPercent;
-  const showStock = DEBUG_FORCE_PILLS ? true : realShowStock;
+  const stockState: StockState = DEBUG_FORCE_PILLS ? "in" : getStockState(p as any);
+  const stockLabel =
+    stockState === "in" ? "Na stanju" : stockState === "low" ? "Pri kraju zaliha" : stockState === "out" ? "Nema na stanju" : null;
+
+  const stockClass =
+    stockState === "in"
+      ? "bg-emerald-500"
+      : stockState === "low"
+        ? "bg-orange-500"
+        : stockState === "out"
+          ? "bg-red-700"
+          : "";
+
+  const showPills = !!discountLabel || !!stockLabel;
+
+  // dots podigni kad postoje pillovi
+  const dotsBottomClass = showPills ? "bottom-8" : "bottom-2";
 
   return (
     <div className="mic-product-card group mic-card mic-card-hover relative p-3">
@@ -170,26 +163,24 @@ export function ProductRowList({
 
                 <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/12 via-black/0 to-black/0 opacity-0 transition-opacity duration-200 group-hover:opacity-100" />
 
-                {/* Pills: dno slike, desktop hover only (touch uvek) */}
-                {(isSale || showStock) ? (
-                  <div className="absolute left-2 bottom-2 flex flex-wrap items-center gap-1.5 opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity">
-                    {isSale ? (
-                      <div className="rounded-full bg-black px-2 py-1 text-[11px] font-semibold text-white leading-none">
-                        Akcija
-                      </div>
-                    ) : null}
+                {/* Pills: dno slike (jedan red) */}
+                {showPills ? (
+                  <div className="absolute left-2 right-2 bottom-2 flex items-center justify-between gap-2 pointer-events-none">
+                    <div className="flex items-center gap-2">
+                      {discountLabel ? (
+                        <div className="rounded-full bg-red-600 px-2 py-1 text-[11px] font-extrabold text-white shadow leading-none">
+                          {discountLabel}
+                        </div>
+                      ) : null}
+                    </div>
 
-                    {percent != null ? (
-                      <div className="rounded-full bg-white/95 px-2 py-1 text-[11px] font-semibold text-black shadow leading-none">
-                        -{percent}%
-                      </div>
-                    ) : null}
-
-                    {showStock ? (
-                      <div className="rounded-full bg-white/95 px-2 py-1 text-[11px] font-semibold text-black shadow leading-none">
-                        Na stanju
-                      </div>
-                    ) : null}
+                    <div className="flex items-center gap-2">
+                      {stockLabel ? (
+                        <div className={cx("rounded-full px-2 py-1 text-[11px] font-semibold text-white shadow leading-none", stockClass)}>
+                          {stockLabel}
+                        </div>
+                      ) : null}
+                    </div>
                   </div>
                 ) : null}
               </>
@@ -197,7 +188,7 @@ export function ProductRowList({
               <div className="flex h-full w-full items-center justify-center text-xs mic-muted">Nema</div>
             )}
 
-            {/* MIC-like image switching: chevrons + dots */}
+            {/* MIC-like image switching */}
             {gallery.length > 1 ? (
               <>
                 <button
@@ -238,7 +229,7 @@ export function ProductRowList({
                   <ChevronRight className="h-4 w-4" />
                 </button>
 
-                <div className="absolute bottom-2 left-0 right-0 flex items-center justify-center gap-1.5 px-2 pointer-events-none">
+                <div className={cx("absolute left-0 right-0 flex items-center justify-center gap-1.5 px-2 pointer-events-none", dotsBottomClass)}>
                   {gallery.map((g, i) => (
                     <span
                       key={`${g.thumb}-${i}`}
@@ -263,7 +254,7 @@ export function ProductRowList({
             <PriceBlock p={p} />
 
             <div className="grid gap-1 text-xs mic-muted">
-              <div className="truncate" title="Rok isporuke">
+              <div className="truncate min-h-[16px]" title="Rok isporuke">
                 Isporuka: 1–3 dana
               </div>
               <div className="truncate" title="Povraćaj">
