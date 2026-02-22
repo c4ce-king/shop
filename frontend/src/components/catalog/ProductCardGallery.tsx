@@ -85,19 +85,67 @@ function PriceStack({ p }: { p: ProductListingItem }) {
 type StockState = "in" | "low" | "out" | null;
 
 function getStockState(p: any): StockState {
-  const qty = typeof p?.stock_qty === "number" ? p.stock_qty : null;
+  // robust: prihvati number ili string iz API-ja
+  const qtyRaw = p?.stock_qty;
+  const qty =
+    typeof qtyRaw === "number"
+      ? qtyRaw
+      : typeof qtyRaw === "string" && qtyRaw.trim() !== "" && !Number.isNaN(Number(qtyRaw))
+        ? Number(qtyRaw)
+        : null;
+
   const inStockBool = typeof p?.in_stock === "boolean" ? p.in_stock : null;
 
   if (qty != null) {
     if (qty <= 0) return "out";
-    if (qty < 3) return "low";
-    return "in";
+    if (qty < 3) return "low"; // 1–2
+    return "in"; // 3+
   }
 
   if (inStockBool === false) return "out";
   if (inStockBool === true) return "in";
 
   return null;
+}
+
+function StockLine({ p }: { p: ProductListingItem }) {
+  const state: StockState = FORCE_SHOW_PILLS ? "low" : getStockState(p as any);
+
+  const label =
+    state === "in"
+      ? "Na stanju"
+      : state === "low"
+        ? "Pri kraju zaliha"
+        : state === "out"
+          ? "Proizvod nije dostupan"
+          : null;
+
+  // ✅ low = ista žuta kao mic-chip-dot (rgb(var(--accent)))
+  const textClass =
+    state === "in"
+      ? "text-emerald-600"
+      : state === "low"
+        ? "text-[rgb(var(--accent))]"
+        : state === "out"
+          ? "text-red-600"
+          : "text-transparent";
+
+  const dotClass =
+    state === "in"
+      ? "bg-emerald-500"
+      : state === "low"
+        ? "bg-[rgb(var(--accent))]"
+        : state === "out"
+          ? "bg-red-600"
+          : "bg-transparent";
+
+  // stabilan layout: uvek jedna linija
+  return (
+    <div className="min-h-[16px] flex items-center gap-1.5 text-[12px] leading-tight">
+      <span className={cx("inline-block h-2 w-2 rounded-full", dotClass)} aria-hidden="true" />
+      <span className={cx("font-semibold", textClass)}>{label ?? "x"}</span>
+    </div>
+  );
 }
 
 export function ProductCardGallery({
@@ -126,30 +174,17 @@ export function ProductCardGallery({
   const price = extractPrice(p);
   const realPercent = price.percentOff ?? null;
 
-  // samo "-xx%" (bez "Akcija")
+  // ✅ samo "-xx%" (procenti ostaju na pill-u)
   const discountLabel = FORCE_SHOW_PILLS ? "-25%" : realPercent != null ? `-${realPercent}%` : null;
 
-  const stockState: StockState = FORCE_SHOW_PILLS ? "in" : getStockState(p as any);
+  // pill bar je samo za popust (stock ide ispod cene)
+  const showPillBar = !!discountLabel;
 
-  const stockLabel =
-    stockState === "in" ? "Na stanju" : stockState === "low" ? "Pri kraju zaliha" : stockState === "out" ? "Nema na stanju" : null;
-
-  const stockClass =
-    stockState === "in"
-      ? "bg-emerald-500"
-      : stockState === "low"
-        ? "bg-orange-500"
-        : stockState === "out"
-          ? "bg-red-700"
-          : "";
+  // dots podigni ako postoji pill da se ne preklapa
+  const dotsBottomClass = showPillBar ? "bottom-8" : "bottom-2";
 
   const canPrev = active > 0;
   const canNext = active < gallery.length - 1;
-
-  const showPillBar = !!discountLabel || !!stockLabel;
-
-  // dots podigni ako postoje pillovi da se ne preklapaju
-  const dotsBottomClass = showPillBar ? "bottom-8" : "bottom-2";
 
   return (
     <div className="mic-product-card group mic-card mic-card-hover relative overflow-hidden h-full flex flex-col">
@@ -177,7 +212,7 @@ export function ProductCardGallery({
           <ProductCardActions productId={productId} size="sm" variant="overlay" />
         </div>
 
-        {/* Pill bar na dnu slike (jedan red) */}
+        {/* Pill bar na dnu slike (jedan red) — samo popust */}
         {showPillBar ? (
           <div className="absolute left-2 right-2 bottom-2 z-40 flex items-center justify-between gap-2 pointer-events-none">
             <div className="flex items-center gap-2 min-w-0">
@@ -188,13 +223,7 @@ export function ProductCardGallery({
               ) : null}
             </div>
 
-            <div className="flex items-center gap-2">
-              {stockLabel ? (
-                <div className={cx("rounded-full px-2 py-1 text-xs font-semibold text-white shadow leading-none", stockClass)}>
-                  {stockLabel}
-                </div>
-              ) : null}
-            </div>
+            <div className="flex items-center gap-2" />
           </div>
         ) : null}
 
@@ -259,6 +288,7 @@ export function ProductCardGallery({
         </Link>
 
         <PriceStack p={p} />
+        <StockLine p={p} />
 
         <div className="grid gap-1 text-xs mic-muted">
           <div className="min-h-[16px]" title="Rok isporuke">

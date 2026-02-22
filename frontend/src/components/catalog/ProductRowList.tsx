@@ -50,7 +50,15 @@ function safeSlugPath(slugPath: string) {
 type StockState = "in" | "low" | "out" | null;
 
 function getStockState(p: any): StockState {
-  const qty = typeof p?.stock_qty === "number" ? p.stock_qty : null;
+  // robust: prihvati number ili string iz API-ja
+  const qtyRaw = p?.stock_qty;
+  const qty =
+    typeof qtyRaw === "number"
+      ? qtyRaw
+      : typeof qtyRaw === "string" && qtyRaw.trim() !== "" && !Number.isNaN(Number(qtyRaw))
+        ? Number(qtyRaw)
+        : null;
+
   const inStockBool = typeof p?.in_stock === "boolean" ? p.in_stock : null;
 
   if (qty != null) {
@@ -94,6 +102,45 @@ function PriceBlock({ p }: { p: ProductListingItem }) {
   );
 }
 
+function StockLine({ p }: { p: ProductListingItem }) {
+  const state: StockState = DEBUG_FORCE_PILLS ? "low" : getStockState(p as any);
+
+  const label =
+    state === "in"
+      ? "Na stanju"
+      : state === "low"
+        ? "Pri kraju zaliha"
+        : state === "out"
+          ? "Proizvod nije dostupan"
+          : null;
+
+  // ✅ low = ista žuta kao mic-chip-dot (rgb(var(--accent)))
+  const textClass =
+    state === "in"
+      ? "text-emerald-600"
+      : state === "low"
+        ? "text-[rgb(var(--accent))]"
+        : state === "out"
+          ? "text-red-600"
+          : "text-transparent";
+
+  const dotClass =
+    state === "in"
+      ? "bg-emerald-500"
+      : state === "low"
+        ? "bg-[rgb(var(--accent))]"
+        : state === "out"
+          ? "bg-red-600"
+          : "bg-transparent";
+
+  return (
+    <div className="min-h-[16px] flex items-center gap-1.5 text-[12px] leading-tight">
+      <span className={cx("inline-block h-2 w-2 rounded-full", dotClass)} aria-hidden="true" />
+      <span className={cx("font-semibold", textClass)}>{label ?? "x"}</span>
+    </div>
+  );
+}
+
 export function ProductRowList({
   slugPath,
   categoryName,
@@ -124,24 +171,13 @@ export function ProductRowList({
   const price = extractPrice(p);
   const realPercent = price.percentOff ?? null;
 
+  // ✅ percent ostaje na pill-u
   const discountLabel = DEBUG_FORCE_PILLS ? "-25%" : realPercent != null ? `-${realPercent}%` : null;
 
-  const stockState: StockState = DEBUG_FORCE_PILLS ? "in" : getStockState(p as any);
-  const stockLabel =
-    stockState === "in" ? "Na stanju" : stockState === "low" ? "Pri kraju zaliha" : stockState === "out" ? "Nema na stanju" : null;
+  // pill overlay sada samo za popust
+  const showPills = !!discountLabel;
 
-  const stockClass =
-    stockState === "in"
-      ? "bg-emerald-500"
-      : stockState === "low"
-        ? "bg-orange-500"
-        : stockState === "out"
-          ? "bg-red-700"
-          : "";
-
-  const showPills = !!discountLabel || !!stockLabel;
-
-  // dots podigni kad postoje pillovi
+  // dots podigni kad postoji pill
   const dotsBottomClass = showPills ? "bottom-8" : "bottom-2";
 
   return (
@@ -163,7 +199,7 @@ export function ProductRowList({
 
                 <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/12 via-black/0 to-black/0 opacity-0 transition-opacity duration-200 group-hover:opacity-100" />
 
-                {/* Pills: dno slike (jedan red) */}
+                {/* Pills: dno slike (jedan red) — samo popust */}
                 {showPills ? (
                   <div className="absolute left-2 right-2 bottom-2 flex items-center justify-between gap-2 pointer-events-none">
                     <div className="flex items-center gap-2">
@@ -174,13 +210,7 @@ export function ProductRowList({
                       ) : null}
                     </div>
 
-                    <div className="flex items-center gap-2">
-                      {stockLabel ? (
-                        <div className={cx("rounded-full px-2 py-1 text-[11px] font-semibold text-white shadow leading-none", stockClass)}>
-                          {stockLabel}
-                        </div>
-                      ) : null}
-                    </div>
+                    <div className="flex items-center gap-2" />
                   </div>
                 ) : null}
               </>
@@ -252,6 +282,7 @@ export function ProductRowList({
             </Link>
 
             <PriceBlock p={p} />
+            <StockLine p={p} />
 
             <div className="grid gap-1 text-xs mic-muted">
               <div className="truncate min-h-[16px]" title="Rok isporuke">

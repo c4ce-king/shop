@@ -36,7 +36,7 @@ class CatalogController extends Controller
 
         $out = array_map('strval', $out);
         $out = array_map('trim', $out);
-        $out = array_values(array_filter($out, fn ($x) => $x !== ''));
+        $out = array_values(array_filter($out, fn($x) => $x !== ''));
         $out = array_values(array_unique($out));
 
         return $out;
@@ -79,6 +79,20 @@ class CatalogController extends Controller
         }
 
         return null;
+    }
+
+    /**
+     * ✅ Derived stock status:
+     * - qty >= 4 => in_stock
+     * - qty 1..3 => low_stock
+     * - qty <= 0 => out_of_stock
+     */
+    private function stockStatusFromQty(?int $qty): string
+    {
+        $q = (int)($qty ?? 0);
+        if ($q >= 4) return 'in_stock';
+        if ($q >= 1) return 'low_stock';
+        return 'out_of_stock';
     }
 
     // --------------------------
@@ -148,8 +162,8 @@ class CatalogController extends Controller
 
         $brandIdsSelected = [];
         if (!empty($brandSelected) && Schema::hasTable('brands') && Schema::hasColumn('products', 'brand_id')) {
-            $slugs = array_values(array_filter($brandSelected, fn ($v) => !is_numeric($v)));
-            $ids = array_values(array_filter($brandSelected, fn ($v) => is_numeric($v)));
+            $slugs = array_values(array_filter($brandSelected, fn($v) => !is_numeric($v)));
+            $ids = array_values(array_filter($brandSelected, fn($v) => is_numeric($v)));
 
             $qBrand = DB::table('brands')->select('id');
 
@@ -171,7 +185,7 @@ class CatalogController extends Controller
 
         // remove reserved
         $reserved = ['brand', 'min', 'max', 'sort', 'page', 'per_page'];
-        $attributeCodes = array_values(array_filter($attributeCodes, fn ($c) => !in_array((string)$c, $reserved, true)));
+        $attributeCodes = array_values(array_filter($attributeCodes, fn($c) => !in_array((string)$c, $reserved, true)));
 
         // Selected attribute facets from query (dynamic)
         $selected = []; // code => [values]
@@ -257,7 +271,7 @@ class CatalogController extends Controller
         $isSaleCol = Schema::hasColumn('products', 'is_on_sale') ? 'is_on_sale' : null;
         $inStockCol = Schema::hasColumn('products', 'in_stock') ? 'in_stock' : null;
 
-        // ✅ NEW: stock qty (optional, can be null if column doesn't exist)
+        // ✅ stock qty (safe if missing)
         $stockQtyCol = Schema::hasColumn('products', 'stock_qty') ? 'stock_qty' : null;
 
         // --- IMAGES: fetch up to 5 images per product in ONE query ---
@@ -339,12 +353,18 @@ class CatalogController extends Controller
                 $inStock = (bool)($p->{$inStockCol} ?? false);
             }
 
-            // ✅ NEW: stock_qty (nullable)
+            // ✅ stock_qty + derived stock_status
             $stockQty = null;
             if ($stockQtyCol) {
                 $v = $p->{$stockQtyCol} ?? null;
-                if ($v !== null && is_numeric($v)) $stockQty = (int)$v;
+                $stockQty = (int)($v ?? 0);
             }
+
+            // If stock_qty exists => derive from qty.
+            // Else fallback from in_stock for compatibility.
+            $stockStatus = $stockQtyCol
+                ? $this->stockStatusFromQty($stockQty)
+                : (($inStock ?? false) ? 'in_stock' : 'out_of_stock');
 
             return [
                 'id' => $p->id,
@@ -361,8 +381,9 @@ class CatalogController extends Controller
                 'is_sale' => $isSale,
                 'in_stock' => $inStock,
 
-                // ✅ NEW: used by FE for "Pri kraju" logic
+                // ✅ NEW
                 'stock_qty' => $stockQty,
+                'stock_status' => $stockStatus,
 
                 'image_grid_url' => $primaryGrid,
                 'images' => $imgs,
@@ -397,7 +418,7 @@ class CatalogController extends Controller
                     DB::raw('count(distinct products.id) as count')
                 )
                 ->groupBy('value', 'label')
-                ->when($brandSortCol, fn ($qq) => $qq->orderBy("brands.$brandSortCol"))
+                ->when($brandSortCol, fn($qq) => $qq->orderBy("brands.$brandSortCol"))
                 ->orderBy('label')
                 ->get();
 
@@ -405,7 +426,7 @@ class CatalogController extends Controller
                 'code' => 'brend',
                 'label' => 'Brend',
                 'type' => 'multi',
-                'options' => $opts->map(fn ($x) => [
+                'options' => $opts->map(fn($x) => [
                     'value' => (string)$x->value,
                     'label' => (string)$x->label,
                     'count' => (int)$x->count,
@@ -445,7 +466,7 @@ class CatalogController extends Controller
                     'code' => $a->code,
                     'label' => $a->name,
                     'type' => $a->type === 'single' ? 'single' : 'multi',
-                    'options' => $opts->map(fn ($x) => [
+                    'options' => $opts->map(fn($x) => [
                         'value' => (string)$x->value,
                         'label' => (string)$x->label,
                         'count' => (int)$x->count,
@@ -557,11 +578,21 @@ class CatalogController extends Controller
                 ->value('c.slug_path');
         }
 
-        // ✅ NEW: stock qty on PDP too (nullable)
+        // ✅ stock qty + derived stock_status
+        $stockQtyCol = Schema::hasColumn('products', 'stock_qty') ? 'stock_qty' : null;
+
         $stockQty = null;
-        if (Schema::hasColumn('products', 'stock_qty') && isset($p->stock_qty) && is_numeric($p->stock_qty)) {
+        if ($stockQtyCol && isset($p->stock_qty) && is_numeric($p->stock_qty)) {
             $stockQty = (int)$p->stock_qty;
+        } elseif ($stockQtyCol) {
+            $stockQty = 0;
         }
+
+        $inStock = Schema::hasColumn('products', 'in_stock') ? (bool)($p->in_stock ?? false) : null;
+
+        $stockStatus = $stockQtyCol
+            ? $this->stockStatusFromQty($stockQty)
+            : (($inStock ?? false) ? 'in_stock' : 'out_of_stock');
 
         return response()->json([
             'id' => (int)$p->id,
@@ -572,8 +603,11 @@ class CatalogController extends Controller
             'old_price_rsd' => $old,
             'percent_off' => $percent,
 
-            'in_stock' => Schema::hasColumn('products', 'in_stock') ? (bool)($p->in_stock ?? false) : null,
+            'in_stock' => $inStock,
+
+            // ✅ NEW
             'stock_qty' => $stockQty,
+            'stock_status' => $stockStatus,
 
             'category_slug_path' => $categorySlugPath,
             'images' => $imgs,
@@ -713,7 +747,7 @@ class CatalogController extends Controller
 
         $imgRows = DB::table('product_images')
             ->whereIn('product_id', $productIds)
-            ->when($hasSort, fn ($qq) => $qq->orderBy('sort_order'))
+            ->when($hasSort, fn($qq) => $qq->orderBy('sort_order'))
             ->orderBy('id')
             ->get($selectCols);
 
@@ -740,7 +774,10 @@ class CatalogController extends Controller
             $already = false;
             foreach ($imagesByProduct[$pid] as $existing) {
                 $ek = (string)($existing['grid'] ?? $existing['thumb'] ?? $existing['original'] ?? '');
-                if ($ek !== '' && $ek === $uniqKey) { $already = true; break; }
+                if ($ek !== '' && $ek === $uniqKey) {
+                    $already = true;
+                    break;
+                }
             }
             if ($already) continue;
 
