@@ -10,7 +10,7 @@ function cx(...classes: Array<string | false | null | undefined>) {
 type Props = {
   open: boolean;
   onClose: () => void;
-  onAuthed?: () => void; // callback after success
+  onAuthed?: () => void;
 };
 
 export function AuthModal({ open, onClose, onAuthed }: Props) {
@@ -26,7 +26,7 @@ export function AuthModal({ open, onClose, onAuthed }: Props) {
   const [mounted, setMounted] = React.useState(false);
   const [phase, setPhase] = React.useState<"enter" | "exit">("enter");
 
-  const EXIT_MS = 500;
+  const EXIT_MS = 520;
 
   React.useEffect(() => {
     if (open) {
@@ -160,22 +160,43 @@ export function AuthModal({ open, onClose, onAuthed }: Props) {
             {tab === "register" ? (
               <div>
                 <div className="text-[12px] font-semibold text-black/70">Ime (opciono)</div>
-                <input className={inputFancy} value={name} onChange={(e) => setName(e.target.value)} placeholder="npr. Pera" disabled={busy} />
+                <input
+                  className={inputFancy}
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                  placeholder="npr. Pera"
+                  disabled={busy}
+                />
               </div>
             ) : null}
 
             <div>
               <div className="text-[12px] font-semibold text-black/70">Email</div>
-              <input className={inputFancy} value={email} onChange={(e) => setEmail(e.target.value)} placeholder="ime@domen.com" disabled={busy} />
+              <input
+                className={inputFancy}
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                placeholder="ime@domen.com"
+                disabled={busy}
+              />
             </div>
 
             <div>
               <div className="text-[12px] font-semibold text-black/70">Lozinka</div>
-              <input className={inputFancy} type="password" value={pass} onChange={(e) => setPass(e.target.value)} placeholder="Minimum 8 karaktera" disabled={busy} />
+              <input
+                className={inputFancy}
+                type="password"
+                value={pass}
+                onChange={(e) => setPass(e.target.value)}
+                placeholder="Minimum 8 karaktera"
+                disabled={busy}
+              />
             </div>
 
             {err ? (
-              <div className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-[12px] text-red-700">{err}</div>
+              <div className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-[12px] text-red-700">
+                {err}
+              </div>
             ) : null}
 
             <div className="flex items-center justify-end gap-2">

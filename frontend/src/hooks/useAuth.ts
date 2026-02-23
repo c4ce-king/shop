@@ -5,7 +5,19 @@ import { apiGet, apiPost } from "@/lib/api";
 
 export type AuthUser = { id: number; email: string; name: string };
 
-export function useAuth() {
+type AuthCtx = {
+  user: AuthUser | null;
+  loading: boolean;
+  isAuthed: boolean;
+  refresh: () => Promise<void>;
+  login: (email: string, password: string) => Promise<AuthUser | null>;
+  register: (name: string, email: string, password: string) => Promise<AuthUser | null>;
+  logout: () => Promise<void>;
+};
+
+const Ctx = React.createContext<AuthCtx | null>(null);
+
+export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = React.useState<AuthUser | null>(null);
   const [loading, setLoading] = React.useState(true);
 
@@ -43,13 +55,24 @@ export function useAuth() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  return {
-    user,
-    loading,
-    isAuthed: !!user,
-    refresh,
-    login,
-    register,
-    logout,
-  };
+  const value: AuthCtx = React.useMemo(
+    () => ({
+      user,
+      loading,
+      isAuthed: !!user,
+      refresh,
+      login,
+      register,
+      logout,
+    }),
+    [user, loading]
+  );
+
+  return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
+}
+
+export function useAuth() {
+  const v = React.useContext(Ctx);
+  if (!v) throw new Error("useAuth must be used inside <AuthProvider>");
+  return v;
 }

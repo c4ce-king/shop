@@ -20,12 +20,17 @@ function isValidEmail(input: string): boolean {
   return re.test(s);
 }
 
+function fireAuthOpen(payload: { mode: "login" | "register"; reason: "notify"; productId: number; productName: string }) {
+  if (typeof window === "undefined") return;
+  window.dispatchEvent(new CustomEvent("shop:auth:open", { detail: payload }));
+}
+
 export function NotifyMeModal({ open, onClose, productId, productName }: Props) {
   const [email, setEmail] = React.useState("");
   const [phone, setPhone] = React.useState("");
   const [note, setNote] = React.useState("");
 
-  const [status, setStatus] = React.useState<"idle" | "sending" | "ok" | "err">("idle");
+  const [status, setStatus] = React.useState<"idle" | "sending" | "ok" | "err" | "need_auth">("idle");
   const [errMsg, setErrMsg] = React.useState<string | null>(null);
 
   const [mounted, setMounted] = React.useState(false);
@@ -69,9 +74,21 @@ export function NotifyMeModal({ open, onClose, productId, productName }: Props) 
   if (!mounted) return null;
 
   const emailOk = isValidEmail(email);
-  const canSend = emailOk && status !== "sending";
+  const canSend = emailOk && status !== "sending" && status !== "ok";
 
   async function onSubmit() {
+    // ✅ Ako nema ID (ili je 0) — NE tehnička poruka, nego auth flow (kako si tražio)
+    if (!productId || productId <= 0) {
+      setStatus("need_auth");
+      setErrMsg("Morate biti ulogovani da bismo sačuvali obaveštenje.");
+      setShake(true);
+      window.setTimeout(() => setShake(false), 520);
+
+      // opciono: odmah otvori login
+      fireAuthOpen({ mode: "login", reason: "notify", productId: 0, productName });
+      return;
+    }
+
     if (!canSend) {
       setShake(true);
       window.setTimeout(() => setShake(false), 520);
@@ -97,16 +114,40 @@ export function NotifyMeModal({ open, onClose, productId, productName }: Props) 
           email: email.trim(),
           phone: phone.trim() || null,
           note: note.trim() || null,
-          source: "pdp",
+          source: "listing",
         }),
       });
+
+      // 401 / Unauthenticated => auth flow
+      if (res.status === 401) {
+        setStatus("need_auth");
+        setErrMsg("Morate biti ulogovani da bismo sačuvali obaveštenje.");
+
+        setShake(true);
+        window.setTimeout(() => setShake(false), 520);
+
+        fireAuthOpen({ mode: "login", reason: "notify", productId, productName });
+        return;
+      }
 
       const json = await res.json().catch(() => ({} as any));
 
       if (!res.ok) {
-        const msg = (json && (json.message || json.error)) || "Nešto nije u redu. Pokušaj ponovo.";
+        const msgRaw = (json && (json.message || json.error)) || "Nešto nije u redu. Pokušaj ponovo.";
+        const msg = String(msgRaw);
+
+        // fallback: ako backend vrati 200/4xx sa tekstom "Unauthenticated."
+        if (msg.toLowerCase().includes("unauthenticated")) {
+          setStatus("need_auth");
+          setErrMsg("Morate biti ulogovani da bismo sačuvali obaveštenje.");
+          setShake(true);
+          window.setTimeout(() => setShake(false), 520);
+          fireAuthOpen({ mode: "login", reason: "notify", productId, productName });
+          return;
+        }
+
         setStatus("err");
-        setErrMsg(String(msg));
+        setErrMsg(msg);
 
         setShake(true);
         window.setTimeout(() => setShake(false), 520);
@@ -148,6 +189,7 @@ export function NotifyMeModal({ open, onClose, productId, productName }: Props) 
   const labelCls = "text-[12px] font-semibold text-black/70";
   const hintCls = "mt-1 text-[11px] mic-muted-2";
 
+  // ✅ sivi border + professional “soft” input look
   const inputFancy =
     "mt-2 w-full rounded-xl border px-4 py-3 text-[13px] outline-none transition " +
     "bg-[rgba(15,23,42,0.02)] text-[rgb(var(--text))] " +
@@ -157,7 +199,7 @@ export function NotifyMeModal({ open, onClose, productId, productName }: Props) 
     "focus:bg-white focus:border-[rgb(var(--border-strong))] focus:shadow-[0_0_0_4px_rgba(15,23,42,0.06)]";
 
   const textareaFancy = cx(inputFancy, "min-h-[110px] resize-none");
-  const emailErrorInline = status !== "sending" && email.trim() !== "" && !emailOk;
+  const emailErrorInline = status !== "sending" && status !== "ok" && email.trim() !== "" && !emailOk;
 
   // ✅ Close button: MIC-ish ghost (no border)
   const closeBtn =
@@ -168,6 +210,14 @@ export function NotifyMeModal({ open, onClose, productId, productName }: Props) 
     "transition hover:bg-black/[0.06] hover:shadow-[0_6px_18px_rgba(15,23,42,0.10)] " +
     "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-black/20 " +
     "disabled:opacity-50 disabled:pointer-events-none";
+
+  // ✅ Auth button: primary MIC yellow
+  const authBtn =
+    "inline-flex items-center justify-center rounded-xl px-4 " +
+    "h-9 text-[12px] font-semibold text-white " +
+    "bg-[rgb(var(--accent))] shadow-[0_10px_24px_rgba(0,0,0,0.16)] " +
+    "transition hover:bg-[rgb(var(--accent-600))] " +
+    "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-black/20";
 
   return (
     <>
@@ -226,14 +276,7 @@ export function NotifyMeModal({ open, onClose, productId, productName }: Props) 
               <div className="mt-1 text-[12px] mic-muted line-clamp-2">{productName}</div>
             </div>
 
-            {/* ✅ NO BORDER close button */}
-            <button
-              type="button"
-              className={closeBtn}
-              onClick={onClose}
-              title="Zatvori"
-              disabled={status === "sending"}
-            >
+            <button type="button" className={closeBtn} onClick={onClose} title="Zatvori" disabled={status === "sending"}>
               Zatvori
             </button>
           </div>
@@ -251,10 +294,12 @@ export function NotifyMeModal({ open, onClose, productId, productName }: Props) 
                 placeholder="npr. ime@domen.com"
                 inputMode="email"
                 autoComplete="email"
-                disabled={status === "sending" || status === "ok"}
+                disabled={status === "sending" || status === "ok" || status === "need_auth"}
               />
               <div className={hintCls}>Koristimo ga samo da te obavestimo kad proizvod bude dostupan.</div>
-              {emailErrorInline ? <div className="mt-1 text-[11px] text-red-600 font-semibold">Email nije validan.</div> : null}
+              {emailErrorInline ? (
+                <div className="mt-1 text-[11px] text-red-600 font-semibold">Email nije validan.</div>
+              ) : null}
             </div>
 
             <div>
@@ -266,7 +311,7 @@ export function NotifyMeModal({ open, onClose, productId, productName }: Props) 
                 placeholder="npr. +381 60 123 456"
                 inputMode="tel"
                 autoComplete="tel"
-                disabled={status === "sending" || status === "ok"}
+                disabled={status === "sending" || status === "ok" || status === "need_auth"}
               />
             </div>
 
@@ -277,31 +322,69 @@ export function NotifyMeModal({ open, onClose, productId, productName }: Props) 
                 value={note}
                 onChange={(e) => setNote(e.target.value)}
                 placeholder="Npr. želim obaveštenje za 2 komada / preferiram Viber…"
-                disabled={status === "sending" || status === "ok"}
+                disabled={status === "sending" || status === "ok" || status === "need_auth"}
               />
             </div>
 
             {status === "err" && errMsg ? (
-              <div className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-[12px] text-red-700">{errMsg}</div>
+              <div className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-[12px] text-red-700">
+                {errMsg}
+              </div>
+            ) : null}
+
+            {status === "need_auth" ? (
+              <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-[12px] text-amber-900">
+                Morate biti ulogovani da bismo sačuvali obaveštenje.
+              </div>
             ) : null}
 
             {status === "ok" ? (
               <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-[12px] text-emerald-800">
-                Sačuvano ✅ Javićemo ti kada bude dostupno.
+                Bićete obavešteni ✅ kada proizvod ponovo bude dostupan.
               </div>
             ) : null}
 
             <div className="flex items-center justify-between gap-3 pt-1">
-              <div className="text-[11px] mic-muted-2">Klikom na “Pošalji” čuvamo prijavu u bazi.</div>
+              <div className="text-[11px] mic-muted-2">
+                {status === "need_auth"
+                  ? "Morate biti ulogovani — izaberite Uloguj se ili Registruj se."
+                  : "Klikom na “Pošalji” čuvamo prijavu u bazi."}
+              </div>
 
-              <button
-                type="button"
-                className={cx(canSend ? "mic-btn-primary" : "mic-btn", "h-10 px-5 text-[12px]", !canSend && "opacity-50")}
-                onClick={onSubmit}
-                disabled={!canSend}
-              >
-                {status === "sending" ? "Šaljem…" : "Pošalji"}
-              </button>
+              {status === "need_auth" ? (
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    className={authBtn}
+                    onClick={() => fireAuthOpen({ mode: "login", reason: "notify", productId, productName })}
+                    title="Uloguj se"
+                  >
+                    Uloguj se
+                  </button>
+
+                  <button
+                    type="button"
+                    className={closeBtn}
+                    onClick={() => fireAuthOpen({ mode: "register", reason: "notify", productId, productName })}
+                    title="Registruj se"
+                  >
+                    Registruj se
+                  </button>
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  className={cx(
+                    canSend ? "mic-btn-primary" : "mic-btn",
+                    "h-10 px-5 text-[12px]",
+                    !canSend && "opacity-50"
+                  )}
+                  onClick={onSubmit}
+                  disabled={!canSend}
+                >
+                  {status === "sending" ? "Šaljem…" : "Pošalji"}
+                </button>
+              )}
             </div>
           </div>
         </div>

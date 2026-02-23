@@ -9,6 +9,7 @@ return [
     // ✅ Dev: koristimo 127.0.0.1 kao primarni
     'allowed_origins' => [
         'http://127.0.0.1:3000',
+         'http://localhost:3000',
     ],
 
     'allowed_origins_patterns' => [],
